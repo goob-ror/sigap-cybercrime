@@ -6,27 +6,29 @@ import { Info } from '@/components/ui/Card'
 import { Label } from '@/components/ui/Label'
 import { PageTitle } from '@/components/ui/PageTitle'
 import { Select } from '@/components/ui/Select'
-import type { Detection, Level, NormalizedEvent, SourceKind } from '@/core/model'
+import type { Level, SourceKind } from '@/core/model'
+import { scorePercent } from '@/core/report/narrative'
+import type { Investigation } from '@/db/hooks'
 import { RULES } from '@/data/rules/catalog'
 import { EvidencePanel } from '@/features/timeline/EvidencePanel'
 import { fmtDate, fmtDuration, fmtNumber, fmtTime } from '@/lib/format'
-import { relatedDetections } from '@/lib/related'
+import { incidentNeighbors } from '@/lib/related'
 import { KIND_LABEL, LEVEL_LABEL, levelStyle } from '@/lib/styles'
 
 type Props = {
-  detections: Detection[]
-  eventsById: Map<string, NormalizedEvent>
-  eventCount: number
+  data: Investigation
   selectedId: string | null
   onSelect: (id: string) => void
   openDetail: (id: string) => void
   openImport: () => void
+  openCase: (caseId: string) => void
 }
 
 const LEVEL_OPTIONS = ['Semua tingkat', ...(['critical', 'high', 'medium', 'low'] as Level[]).map((l) => LEVEL_LABEL[l])]
 const KIND_OPTIONS = ['Semua sumber', ...(['endpoint', 'network', 'ot'] as SourceKind[]).map((k) => KIND_LABEL[k])]
 
-export function TimelineView({ detections, eventsById, eventCount, selectedId, onSelect, openDetail, openImport }: Props) {
+export function TimelineView({ data, selectedId, onSelect, openDetail, openImport, openCase }: Props) {
+  const { detections, eventsById, eventCount } = data
   const [query, setQuery] = useState('')
   const [level, setLevel] = useState(LEVEL_OPTIONS[0])
   const [kind, setKind] = useState(KIND_OPTIONS[0])
@@ -39,7 +41,9 @@ export function TimelineView({ detections, eventsById, eventCount, selectedId, o
   }), [detections, eventsById, query, level, kind])
 
   const selected = detections.find((d) => d.id === selectedId) ?? filtered[0]
-  const related = useMemo(() => new Set(selected ? relatedDetections(selected, detections, eventsById).map((d) => d.id) : []), [selected, detections, eventsById])
+  const incident = selected ? data.incidentOf.get(selected.id) : undefined
+  // Every other detection of the selected one's incident is highlighted as related.
+  const related = useMemo(() => new Set(incident?.detectionIds.filter((id) => id !== selected?.id) ?? []), [incident, selected])
 
   if (detections.length === 0) {
     return <div className="mx-auto grid min-h-[60vh] max-w-xl place-items-center text-center"><div><div className="mx-auto mb-4 grid size-12 place-items-center rounded-xl border border-[#272E3A] bg-[#131720] text-[#7DD3FC]"><Upload size={22} /></div><h1 className="text-lg font-semibold">{eventCount ? 'Tidak ada temuan' : 'Belum ada data'}</h1><p className="mt-2 text-sm text-[#7E8998]">{eventCount ? `${fmtNumber(eventCount)} event diperiksa dan tidak ada yang memicu aturan deteksi.` : 'Impor log satuan atau muat skenario contoh untuk mulai menganalisis.'}</p><button onClick={openImport} className="mt-5 rounded-lg bg-[#38BDF8] px-4 py-2 text-xs font-bold text-[#071018]">Buka Impor Data</button></div></div>
@@ -60,7 +64,7 @@ export function TimelineView({ detections, eventsById, eventCount, selectedId, o
       <Select value={kind} setValue={setKind} options={KIND_OPTIONS} />
       <button onClick={() => { setQuery(''); setLevel(LEVEL_OPTIONS[0]); setKind(KIND_OPTIONS[0]) }} className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#272E3A] px-3 text-xs text-[#9BA5B4] hover:text-white"><Filter size={14} />Reset</button>
     </div>
-    <div className={`grid gap-4 ${panel ? 'xl:grid-cols-[minmax(0,1fr)_380px]' : ''}`}>
+    <div className={`grid grid-cols-1 gap-4 ${panel ? 'xl:grid-cols-[minmax(0,1fr)_380px]' : ''}`}>
       <section className="overflow-hidden rounded-xl border border-[#272E3A] bg-[#0D1016]">
         <div className="hidden grid-cols-[112px_40px_minmax(260px,1fr)_140px_100px] gap-3 border-b border-[#272E3A] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#657080] md:grid"><span>Waktu (WIB)</span><span></span><span>Temuan</span><span>Entitas</span><span>Tingkat</span></div>
         {filtered.length === 0 ? <div className="grid min-h-64 place-items-center text-center"><div><Search className="mx-auto mb-3 text-[#536071]" /><div className="text-sm font-medium">Tidak ada temuan yang cocok</div><div className="mt-1 text-xs text-[#687384]">Ubah kata kunci atau filter pencarian.</div></div></div> :
@@ -77,11 +81,11 @@ export function TimelineView({ detections, eventsById, eventCount, selectedId, o
                 <div className="hidden min-w-0 md:block"><div className="truncate font-mono text-[11px]">{e?.host ?? e?.srcIp ?? '—'}</div><div className="mt-1 truncate text-[10px] text-[#7E8998]">{e?.user ?? e?.dstIp ?? ''}</div></div>
                 <div className="hidden md:block"><Badge className={levelStyle[d.level]}>{LEVEL_LABEL[d.level]}</Badge></div>
               </button>
-              {isSelected && <div className="grid gap-3 border-t border-[#272E3A]/70 bg-[#0B0E13] px-4 py-3 md:ml-[152px] md:grid-cols-3"><Info title="Aturan terpicu" text={rule?.id ?? d.ruleId} /><Info title="Bukti utama" text={evidence ? `${evidence[0]}: ${evidence[1]}` : '—'} /><div><Label>Korelasi sementara</Label><div className="text-xs text-[#B4BCC7]">{related.size} temuan terkait (host/pengguna/IP sama, ±60 menit)</div></div></div>}
+              {isSelected && <div className="grid grid-cols-1 gap-3 border-t border-[#272E3A]/70 bg-[#0B0E13] px-4 py-3 md:ml-[152px] md:grid-cols-3"><Info title="Aturan terpicu" text={rule?.id ?? d.ruleId} /><Info title="Bukti utama" text={evidence ? `${evidence[0]}: ${evidence[1]}` : '—'} /><div><Label>Korelasi</Label>{incident?.caseId ? <button onClick={() => openCase(incident.caseId!)} className="text-left text-xs text-[#B4BCC7] hover:text-[#7DD3FC]">{incident.caseId} · {related.size} temuan terkait · skor {scorePercent(incident.score)}%</button> : <div className="text-xs text-[#B4BCC7]">Tidak terkait temuan lain</div>}</div></div>}
             </div>
           })}
       </section>
-      {panel && selected && <EvidencePanel detection={selected} event={eventsById.get(selected.eventIds[0])} related={detections.filter((d) => related.has(d.id))} close={() => setPanel(false)} openDetail={() => openDetail(selected.id)} select={onSelect} />}
+      {panel && selected && <EvidencePanel detection={selected} event={eventsById.get(selected.eventIds[0])} incident={incident} related={incidentNeighbors(selected, incident, data.detectionsById, 6)} close={() => setPanel(false)} openDetail={() => openDetail(selected.id)} openCase={openCase} select={onSelect} />}
       {!panel && <button onClick={() => setPanel(true)} className="fixed bottom-5 right-5 flex items-center gap-2 rounded-lg bg-[#38BDF8] px-4 py-2 text-xs font-semibold text-[#071018]"><PanelLeftClose size={15} />Buka detail</button>}
     </div>
   </div>

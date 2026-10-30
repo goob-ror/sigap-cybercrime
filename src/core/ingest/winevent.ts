@@ -1,10 +1,10 @@
 import type { FieldValue, Logsource, NormalizedEvent } from '@/core/model'
 import { basename, cleanIp, flatten, normalizeUser, parseTimestamp, toNumber, truncate } from '@/core/ingest/util'
+import { unwrapWinRecord } from '@/core/ingest/winexport'
 
 /**
- * Windows Event Log records exported as JSON (one object per line), as produced by
- * `collector/sigap-collect.ps1` or `Get-WinEvent | ConvertTo-Json`. Accepts both nested
- * `EventData` and flat records.
+ * Windows Event Log records exported as JSON: the SIGAP collector, PowerShell `Get-WinEvent` /
+ * `Get-EventLog | ConvertTo-Json`, Winlogbeat, evtx_dump and EvtxECmd (see `winexport.ts`).
  */
 export type WinEventRecord = Record<string, unknown>
 
@@ -67,7 +67,8 @@ function describe(eventId: number, logsource: Logsource, f: Record<string, Field
   return `EventID ${eventId} (${str(f.Channel) ?? 'Windows'})`
 }
 
-export function normalizeWinEvent(record: WinEventRecord, id: string, importId: string): NormalizedEvent | null {
+export function normalizeWinEvent(input: WinEventRecord, id: string, importId: string): NormalizedEvent | null {
+  const record = unwrapWinRecord(input)
   const data = { ...((record.EventData as object) ?? {}), ...((record.UserData as object) ?? {}) } as Record<string, unknown>
   const flat = { ...record }
   delete flat.EventData
@@ -112,10 +113,11 @@ export function normalizeWinEvent(record: WinEventRecord, id: string, importId: 
     srcIp: cleanIp(fields.IpAddress ?? fields.SourceIp),
     dstIp: cleanIp(fields.DestinationIp),
     dstPort: toNumber(fields.DestinationPort),
+    // Sysmon `Hashes` describe the target file on file events and the process image otherwise.
     process: fields.Image || fields.CommandLine
-      ? { name: basename(str(fields.Image)), cmdline: str(fields.CommandLine), parent: basename(str(fields.ParentImage)), pid: toNumber(fields.ProcessId) }
+      ? { name: basename(str(fields.Image)), cmdline: str(fields.CommandLine), parent: basename(str(fields.ParentImage)), pid: toNumber(fields.ProcessId), sha256: targetFile ? undefined : sha256 }
       : undefined,
-    file: targetFile || sha256 ? { name: basename(targetFile), path: targetFile, sha256 } : undefined,
+    file: targetFile ? { name: basename(targetFile), path: targetFile, sha256 } : undefined,
     domain: str(fields.QueryName),
     message: describe(eventId, logsource, fields),
     importId,

@@ -56,6 +56,21 @@ export function parseTimestamp(value: unknown): number | undefined {
   return Number.isNaN(parsed) ? undefined : parsed
 }
 
+/**
+ * Decodes a file's bytes. Honours a byte-order mark: Windows PowerShell 5.1 writes UTF-16LE with
+ * a BOM when output is redirected (`… | ConvertTo-Json > events.json`). Without a BOM, text whose
+ * odd bytes are mostly zero is taken as UTF-16LE; anything else as UTF-8.
+ */
+export function decodeText(bytes: Uint8Array): string {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes)
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes)
+  const sample = bytes.subarray(0, 512)
+  let zeros = 0
+  for (let i = 1; i < sample.length; i += 2) if (sample[i] === 0) zeros++
+  if (sample.length >= 4 && zeros > sample.length / 4) return new TextDecoder('utf-16le').decode(bytes)
+  return new TextDecoder('utf-8').decode(bytes)
+}
+
 /** Splits text into non-empty lines, keeping 1-based line numbers. */
 export function* lines(text: string): Generator<[number, string]> {
   let lineNo = 0

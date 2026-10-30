@@ -1,4 +1,4 @@
-import type { NormalizedEvent } from '@/core/model'
+import type { NormalizedEvent, UnitProfile } from '@/core/model'
 import type { RuleMeta } from '@/core/detect/sigma'
 import { formatBytes } from '@/core/ingest/kv'
 import { ipInCidr, isPrivateIp } from '@/core/net'
@@ -8,16 +8,6 @@ import { ipInCidr, isPrivateIp } from '@/core/net'
  * correlation syntax is not supported, so these are written in TypeScript but expose the same
  * metadata as Sigma rules so the UI treats them alike.
  */
-
-/** Unit-specific settings. Edit to match a real unit's network. */
-export type UnitProfile = {
-  /** Hosts allowed to send Modbus commands (HMI / engineering workstations). */
-  engineeringHosts: string[]
-  /** OT network segments. */
-  otSubnets: string[]
-  /** Outbound volume to one external destination that counts as possible exfiltration. */
-  uploadThresholdBytes: number
-}
 
 export type NativeHit = { eventIds: string[]; matched: Record<string, string>; ts: number }
 export type NativeRule = { meta: RuleMeta; run(events: readonly NormalizedEvent[]): NativeHit[] }

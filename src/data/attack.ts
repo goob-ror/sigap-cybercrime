@@ -43,3 +43,24 @@ export const TACTIC_ORDER = [
   'Initial Access', 'Execution', 'Persistence', 'Defense Evasion', 'Credential Access', 'Discovery',
   'Lateral Movement', 'Collection', 'Command and Control', 'Exfiltration', 'Impair Process Control', 'Impact',
 ]
+
+/** Bahasa Indonesia names for the tactics, used in incident stories. */
+export const TACTIC_LABEL: Record<string, string> = {
+  'Initial Access': 'Akses awal',
+  Execution: 'Eksekusi',
+  Persistence: 'Bertahan di sistem',
+  'Defense Evasion': 'Menghindari pertahanan',
+  'Credential Access': 'Pencurian kredensial',
+  Discovery: 'Pengintaian',
+  'Lateral Movement': 'Pergerakan lateral',
+  Collection: 'Pengumpulan data',
+  'Command and Control': 'Kendali jarak jauh (C2)',
+  Exfiltration: 'Eksfiltrasi data',
+  'Impair Process Control': 'Gangguan kendali proses OT',
+  Impact: 'Dampak',
+}
+
+/** Tactic of a technique id, or undefined if the technique is not in the catalog. */
+export function tacticOf(techniqueId: string): string | undefined {
+  return TECHNIQUES.get(techniqueId)?.tactic ?? TECHNIQUES.get(techniqueId.split('.')[0])?.tactic
+}

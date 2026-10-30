@@ -32,3 +32,15 @@ export function fmtNumber(n: number): string {
 export function shortHash(hash: string): string {
   return `${hash.slice(0, 10)}…${hash.slice(-6)}`
 }
+
+/** `53 menit`, `2 jam 5 menit`, `3 hari 4 jam`: a duration in words. */
+export function fmtSpan(ms: number): string {
+  const minutes = Math.round(ms / 60_000)
+  if (minutes < 1) return 'kurang dari 1 menit'
+  const d = Math.floor(minutes / 1440)
+  const h = Math.floor((minutes % 1440) / 60)
+  const m = minutes % 60
+  if (d) return `${d} hari${h ? ` ${h} jam` : ''}`
+  if (h) return `${h} jam${m ? ` ${m} menit` : ''}`
+  return `${m} menit`
+}

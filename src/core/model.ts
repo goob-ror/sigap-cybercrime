@@ -22,7 +22,8 @@ export type NormalizedEvent = {
   srcIp?: string
   dstIp?: string
   dstPort?: number
-  process?: { name?: string; cmdline?: string; parent?: string; pid?: number }
+  /** `sha256` is the hash of the process image (Sysmon `Hashes`), not of a dropped file. */
+  process?: { name?: string; cmdline?: string; parent?: string; pid?: number; sha256?: string }
   file?: { name?: string; path?: string; sha256?: string }
   domain?: string
   url?: string
@@ -51,18 +52,41 @@ export type Detection = {
 export type EntityType = 'user' | 'host' | 'ip' | 'domain' | 'hash' | 'file' | 'device'
 export type Entity = { type: EntityType; value: string }
 
-/** One term of the explainable confidence score. */
-export type ScoreTerm = { label: string; weight: number }
+/** An entity as it appears in an incident. */
+export type IncidentEntity = Entity & {
+  /** Stable id, e.g. `asset:WS-MIN-03`, `ip:203.0.113.66`, `user:sertu.rina`. */
+  key: string
+  /** Other identifiers of the same asset, e.g. its IP addresses. */
+  aliases: string[]
+  detectionIds: string[]
+  firstSeen: number
+  /** Host where a detection was logged, or the source of the activity. */
+  actor: boolean
+  /** Seen with more than half of the hosts (DNS, file server, shared account). */
+  common: boolean
+}
+
+/** A directed link between two entities of an incident, e.g. `WS-MIN-03 -> 203.0.113.66 (HTTPS :443)`. */
+export type Relation = { from: string; to: string; labels: string[]; count: number; level: Level; detectionIds: string[]; firstSeen: number }
+
+/** One term of the explainable confidence score `1 - Π(1 - weight)`. */
+export type ScoreTerm = { kind: 'rule' | 'killchain' | 'sources'; label: string; weight: number; level?: Level; count?: number }
 
 /** Detections linked by shared entities within a time window. */
 export type Incident = {
   id: string
   caseId?: string
   title: string
+  /** Assets in order of first appearance (entity keys), e.g. workstation -> server -> PLC. */
+  path: string[]
+  level: Level
   detectionIds: string[]
-  entities: Entity[]
+  ruleIds: string[]
+  entities: IncidentEntity[]
+  relations: Relation[]
   /** ATT&CK tactics in kill-chain order. */
   tactics: string[]
+  sourceKinds: SourceKind[]
   /** 0–1, computed from `scoreBreakdown`. */
   score: number
   scoreBreakdown: ScoreTerm[]
@@ -72,18 +96,38 @@ export type Incident = {
 
 export type CaseStatus = 'Open' | 'Investigating' | 'Resolved'
 export type FollowUpStatus = 'Baru' | 'Berjalan' | 'Selesai'
+export type CaseHistoryEntry = { ts: number; actor: string; text: string }
 
+/** How the unit handles an incident. Created automatically; survives re-imports. */
 export type Case = {
   id: string
   title: string
   status: CaseStatus
+  assignee: string
   notes: string
   createdAt: number
   updatedAt: number
   incidentIds: string[]
-  /** Playbook step id -> done. */
+  /** Response step id (`<detectionId>#<index>`, later playbook steps) -> done. */
   playbookProgress: Record<string, boolean>
+  /** Detection id -> follow-up status. */
   followUps: Record<string, FollowUpStatus>
+  history: CaseHistoryEntry[]
+}
+
+/** A known asset of the unit (from its inventory), used to tie IP addresses to hosts. */
+export type UnitAsset = { name: string; ip: string; kind: 'it' | 'ot'; role: string }
+
+/** Unit-specific settings. Edit to match a real unit's network. */
+export type UnitProfile = {
+  name: string
+  /** Hosts allowed to send Modbus commands (HMI / engineering workstations). */
+  engineeringHosts: string[]
+  /** OT network segments. */
+  otSubnets: string[]
+  /** Outbound volume to one external destination that counts as possible exfiltration. */
+  uploadThresholdBytes: number
+  assets: UnitAsset[]
 }
 
 /** A file brought into SIGAP: an imported log, an APK under triage, or exported evidence. */

@@ -1,5 +1,10 @@
 import { Dexie, type EntityTable } from 'dexie'
 import type { Artifact, Case, CustodyEntry, Detection, Incident, NormalizedEvent } from '@/core/model'
+import type { EventStats } from '@/core/stats'
+import type { ScenarioCheck } from '@/workers/protocol'
+
+/** Derived values the worker computes after each import. */
+export type MetaRow = { key: 'stats'; value: EventStats } | { key: 'check'; value: ScenarioCheck } | { key: 'engine'; value: string }
 
 /** Local IndexedDB store. Everything stays in the operator's browser; nothing is sent anywhere. */
 export class SigapDb extends Dexie {
@@ -9,6 +14,7 @@ export class SigapDb extends Dexie {
   cases!: EntityTable<Case, 'id'>
   artifacts!: EntityTable<Artifact, 'id'>
   custody!: EntityTable<CustodyEntry, 'seq'>
+  meta!: EntityTable<MetaRow, 'key'>
 
   constructor() {
     super('sigap')
@@ -21,6 +27,7 @@ export class SigapDb extends Dexie {
       artifacts: 'id, caseId, sha256, kind, addedAt',
       custody: 'seq, artifactId, ts',
     })
+    this.version(2).stores({ meta: 'key' })
   }
 }
 

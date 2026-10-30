@@ -21,7 +21,7 @@ export function AttackView({ detections, select }: { detections: Detection[]; se
   return <div className="mx-auto max-w-6xl">
     <div className="mb-6"><PageTitle eyebrow="Pemetaan Pengetahuan" title="MITRE ATT&CK & ATT&CK for ICS" text="Teknik yang muncul pada temuan, diurutkan menurut tahap serangan. Pilih kartu untuk membuka temuan paling berat." /></div>
     {techniques.length === 0 ? <p className="rounded-xl border border-[#272E3A] bg-[#131720] p-8 text-center text-sm text-[#657080]">Belum ada temuan yang dipetakan.</p> :
-      <div className="grid gap-4 md:grid-cols-2">{techniques.map((id) => {
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">{techniques.map((id) => {
         const t = TECHNIQUES.get(id)
         const list = byTechnique.get(id)!
         const top = [...list].sort((a, b) => LEVEL_RANK[b.level] - LEVEL_RANK[a.level] || a.ts - b.ts)[0]
