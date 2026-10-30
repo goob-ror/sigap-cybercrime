@@ -1,0 +1,104 @@
+# SIGAP rule pack — network (Zeek, firewall) and OT (Modbus).
+# Engineering host allowlist (10.40.7.10) and OT segment (10.40.7.0/24) belong to the fictional
+# demo unit; change them to match a real unit (see also src/data/unitProfile.ts).
+title: Koneksi Modbus dari luar segmen OT (Zeek)
+id: sigap-net-it-to-modbus
+status: experimental
+description: Host di luar segmen OT membuka koneksi ke port Modbus/TCP 502. Jaringan TI seharusnya tidak dapat berbicara langsung dengan pengendali (PLC) genset.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.lateral_movement, attack.t0886]
+logsource: { product: zeek, service: conn }
+detection:
+  selection:
+    id.resp_p: 502
+  filter_ot:
+    id.orig_h|cidr: '10.40.7.0/24'
+  condition: selection and not filter_ot
+falsepositives: [Server historian resmi di luar segmen OT]
+level: high
+respons:
+  - Periksa aturan firewall antara jaringan TI dan OT
+  - Identifikasi host sumber dan isolasi bila tidak berwenang
+---
+title: Firewall mengizinkan lalu lintas TI ke port Modbus
+id: sigap-fw-it-to-modbus
+status: experimental
+description: Log firewall menunjukkan lalu lintas dari luar segmen OT ke port 502 diizinkan. Ini indikasi aturan segmentasi yang terlalu longgar sekaligus aktivitas mencurigakan.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.lateral_movement, attack.t0886]
+logsource: { category: firewall }
+detection:
+  selection:
+    dstport: 502
+    action: ['accept', 'allow', 'pass']
+  filter_ot:
+    srcip|cidr: '10.40.7.0/24'
+  condition: selection and not filter_ot
+falsepositives: [Pengecualian firewall yang terdokumentasi]
+level: high
+respons:
+  - Perketat aturan firewall agar hanya HMI/engineering yang boleh ke port 502
+---
+title: Perintah tulis Modbus dari host tidak berwenang
+id: sigap-ot-modbus-write-unauthorized
+status: experimental
+description: Perintah tulis Modbus (register atau coil) dikirim oleh host di luar daftar HMI/engineering. Perintah ini dapat mengubah perilaku genset secara langsung.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.impair_process_control, attack.t0855]
+logsource: { product: zeek }
+detection:
+  selection:
+    func|startswith: ['WRITE_', 'MASK_WRITE', 'READ_WRITE']
+  filter_engineering:
+    id.orig_h: ['10.40.7.10']
+  condition: selection and not filter_engineering
+falsepositives: [Laptop teknisi vendor saat pemeliharaan (tambahkan ke daftar engineering)]
+level: high
+respons:
+  - Hubungi operator genset untuk memeriksa kondisi fisik dan nilai setpoint
+  - Blokir host sumber dari segmen OT
+  - Catat nilai register sebelum dan sesudah perubahan
+---
+title: Perintah henti genset (coil RUN = 0)
+id: sigap-ot-genset-stop-coil
+status: experimental
+description: Coil 0 (RUN genset) pada pengendali ditulis bernilai 0/false oleh host selain HMI. Akibatnya genset dapat berhenti dan pasokan listrik markas terganggu.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.impact, attack.t0831, attack.t0826]
+logsource: { product: zeek }
+detection:
+  selection:
+    func: WRITE_SINGLE_COIL
+    address: 0
+    values: ['F', 'false', '0']
+  filter_engineering:
+    id.orig_h: ['10.40.7.10']
+  condition: selection and not filter_engineering
+falsepositives: [Penghentian darurat oleh teknisi dari perangkat lain (harus terdokumentasi)]
+level: critical
+respons:
+  - Segera minta operator menyalakan ulang genset secara manual sesuai prosedur
+  - Alihkan pengendali ke mode lokal/manual bila tersedia
+  - Laporkan ke komandan satuan dan PUSSIBERAD
+---
+title: Setpoint tegangan genset di luar batas aman
+id: sigap-ot-setpoint-out-of-range
+status: experimental
+description: Register 10 (setpoint tegangan keluaran, volt) ditulis dengan nilai di luar rentang aman 200–240 V. Nilai ekstrem dapat merusak peralatan yang dicatu genset.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.impair_process_control, attack.t0836]
+logsource: { product: zeek }
+detection:
+  selection_write:
+    func: ['WRITE_SINGLE_REGISTER', 'WRITE_MULTIPLE_REGISTERS']
+    address: 10
+  range_high:
+    values|gt: 240
+  range_low:
+    values|lt: 200
+  condition: selection_write and 1 of range_*
+falsepositives: [Uji beban terjadwal dengan pengawasan teknisi]
+level: critical
+respons:
+  - Kembalikan setpoint ke nilai normal dari HMI
+  - Periksa peralatan yang dicatu genset sejak waktu perubahan

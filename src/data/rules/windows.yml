@@ -1,0 +1,303 @@
+# SIGAP rule pack — Windows endpoint (Sysmon, Security, System, PowerShell).
+# Format: Sigma (https://github.com/SigmaHQ/sigma-specification). Detection ideas follow common
+# public Sigma community practice; rules are written by Tim Pengen Seblak for SIGAP.
+# `respons` is a SIGAP extension: first-response steps for the unit operator.
+title: Dokumen makro atau skrip diterima lewat aplikasi pesan
+id: sigap-win-macro-doc-from-messaging
+status: experimental
+description: Aplikasi pesan (WhatsApp/Telegram Desktop) menyimpan berkas yang dapat menjalankan kode (dokumen ber-makro, skrip, pintasan, ISO, APK). Modus ini banyak dipakai untuk menyerang personel lewat akun tepercaya yang sudah diambil alih.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.initial_access, attack.t1566.003]
+logsource: { product: windows, category: file_event }
+detection:
+  selection_app:
+    Image|endswith: ['\WhatsApp.exe', '\WhatsApp.Root.exe', '\Telegram.exe']
+  selection_ext:
+    TargetFilename|endswith: ['.docm', '.dotm', '.xlsm', '.pptm', '.iso', '.img', '.lnk', '.js', '.vbs', '.hta', '.apk', '.scr']
+  condition: selection_app and selection_ext
+falsepositives: [Dokumen ber-makro resmi yang dikirim antarstaf]
+level: medium
+respons:
+  - Jangan buka berkas; konfirmasi ke pengirim lewat saluran lain (telepon/tatap muka)
+  - Hitung hash berkas dan periksa di Triase SIGAP
+  - Bila akun pengirim diduga diambil alih, laporkan ke operator untuk penanganan akun
+---
+title: Aplikasi Office menjalankan shell atau skrip
+id: sigap-win-office-spawn-shell
+status: experimental
+description: Word/Excel/PowerPoint membuat proses cmd, PowerShell, mshta, rundll32 atau sejenisnya. Ini ciri khas makro berbahaya yang berhasil dieksekusi.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.execution, attack.t1204.002, attack.t1059]
+logsource: { product: windows, category: process_creation }
+detection:
+  selection_parent:
+    ParentImage|endswith: ['\WINWORD.EXE', '\EXCEL.EXE', '\POWERPNT.EXE', '\MSPUB.EXE', '\ONENOTE.EXE']
+  selection_child:
+    Image|endswith: ['\cmd.exe', '\powershell.exe', '\pwsh.exe', '\wscript.exe', '\cscript.exe', '\mshta.exe', '\rundll32.exe', '\regsvr32.exe', '\certutil.exe', '\bitsadmin.exe']
+  condition: selection_parent and selection_child
+falsepositives: [Add-in Office internal yang memanggil skrip (jarang)]
+level: high
+respons:
+  - Putuskan host dari jaringan (cabut kabel/nonaktifkan Wi-Fi), jangan dimatikan
+  - Catat nama dokumen yang terakhir dibuka dan asal berkasnya
+  - Ganti kata sandi akun pengguna dari perangkat lain yang bersih
+---
+title: PowerShell dengan perintah ter-encode
+id: sigap-win-ps-encoded
+status: experimental
+description: PowerShell dijalankan dengan parameter -EncodedCommand. Teknik ini menyembunyikan isi perintah dari pengamatan langsung dan sering dipakai malware.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.execution, attack.t1059.001, attack.defense_evasion, attack.t1027]
+logsource: { product: windows, category: process_creation }
+detection:
+  selection_img:
+    Image|endswith: ['\powershell.exe', '\pwsh.exe']
+  selection_enc:
+    CommandLine|windash|contains: [' -enc ', ' -encodedcommand ', ' -ec ']
+  condition: selection_img and selection_enc
+falsepositives: [Skrip manajemen perangkat lunak tertentu]
+level: high
+respons:
+  - Dekode perintah (Base64 UTF-16LE) untuk melihat isinya
+  - Telusuri proses induk untuk mengetahui pemicunya
+---
+title: Script PowerShell mengunduh kode dari internet
+id: sigap-win-ps-download-cradle
+status: experimental
+description: Blok skrip PowerShell (EventID 4104) memuat pola pengunduhan seperti DownloadString, Net.WebClient atau Invoke-WebRequest. Ini lazim pada tahap pengambilan payload lanjutan.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.execution, attack.t1059.001, attack.command_and_control, attack.t1105]
+logsource: { product: windows, category: ps_script }
+detection:
+  selection:
+    ScriptBlockText|contains: ['DownloadString(', 'DownloadFile(', 'Net.WebClient', 'Invoke-WebRequest', 'Start-BitsTransfer', 'DownloadData(']
+  condition: selection
+falsepositives: [Skrip instalasi perangkat lunak oleh admin]
+level: high
+respons:
+  - Catat URL/domain yang diunduh dan masukkan ke daftar blokir
+  - Cari host lain yang menghubungi domain yang sama
+---
+title: Dump memori LSASS lewat comsvcs.dll
+id: sigap-win-lsass-dump-comsvcs
+status: experimental
+description: rundll32 memanggil fungsi MiniDump dari comsvcs.dll. Teknik ini digunakan untuk menyalin memori LSASS dan mencuri kredensial pengguna yang sedang login.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.credential_access, attack.t1003.001, attack.defense_evasion, attack.t1218.011]
+logsource: { product: windows, category: process_creation }
+detection:
+  selection:
+    CommandLine|contains|all: ['comsvcs', 'MiniDump']
+  condition: selection
+falsepositives: [Hampir tidak ada]
+level: critical
+respons:
+  - Anggap seluruh akun yang pernah login di host ini telah bocor; reset kata sandinya
+  - Prioritaskan akun admin dan akun layanan
+  - Amankan berkas dump (.dmp) sebagai barang bukti sebelum dihapus
+---
+title: Proses skrip melakukan koneksi ke internet
+id: sigap-win-script-host-network
+status: experimental
+description: PowerShell, wscript, mshta atau rundll32 membuka koneksi ke alamat IP publik. Proses ini jarang perlu berkomunikasi langsung ke internet; pola ini sering berarti kanal command-and-control.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.command_and_control, attack.t1071.001, attack.execution, attack.t1059.001]
+logsource: { product: windows, category: network_connection }
+detection:
+  selection:
+    Image|endswith: ['\powershell.exe', '\pwsh.exe', '\wscript.exe', '\cscript.exe', '\mshta.exe', '\rundll32.exe', '\regsvr32.exe']
+  filter_private:
+    DestinationIp|cidr: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8']
+  condition: selection and not filter_private
+falsepositives: [Skrip pembaruan yang sah]
+level: high
+respons:
+  - Blokir IP tujuan di firewall satuan
+  - Periksa log firewall untuk host lain yang menghubungi IP yang sama
+---
+title: Proses skrip melakukan kueri DNS
+id: sigap-win-script-host-dns
+status: experimental
+description: PowerShell atau skrip host lain meminta resolusi DNS. Biasanya ini langkah awal sebelum mengunduh payload atau menghubungi server pengendali.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.command_and_control, attack.t1071.004]
+logsource: { product: windows, category: dns_query }
+detection:
+  selection:
+    Image|endswith: ['\powershell.exe', '\pwsh.exe', '\wscript.exe', '\cscript.exe', '\mshta.exe', '\rundll32.exe']
+  condition: selection
+falsepositives: [Skrip admin yang mengakses layanan internal]
+level: medium
+respons:
+  - Catat domain yang diminta dan periksa reputasinya secara offline (daftar IOC)
+---
+title: Tugas terjadwal dibuat untuk menjalankan skrip
+id: sigap-win-schtask-create
+status: experimental
+description: schtasks.exe membuat tugas terjadwal yang menjalankan PowerShell/cmd atau berkas dari folder pengguna. Teknik ini dipakai agar malware aktif kembali setelah restart.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.persistence, attack.execution, attack.t1053.005]
+logsource: { product: windows, category: process_creation }
+detection:
+  selection_img:
+    Image|endswith: '\schtasks.exe'
+    CommandLine|windash|contains: ' -create '
+  selection_payload:
+    CommandLine|contains: ['powershell', 'cmd.exe', '\AppData\', '\Users\Public\', '\ProgramData\', ' -enc']
+  condition: selection_img and selection_payload
+falsepositives: [Instalasi perangkat lunak yang membuat jadwal pembaruan]
+level: high
+respons:
+  - Catat nama tugas lalu nonaktifkan (schtasks /change /disable) setelah bukti diamankan
+  - Cari tugas serupa di host lain
+---
+title: Akses share administratif (ADMIN$/C$) dari jarak jauh
+id: sigap-win-admin-share
+status: experimental
+description: Akun mengakses share administratif host lain. Ini lazim pada pergerakan lateral (misalnya PsExec) setelah kredensial admin dicuri.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.lateral_movement, attack.t1021.002]
+logsource: { product: windows, service: security }
+detection:
+  selection:
+    EventID: 5140
+    ShareName|endswith: ['\ADMIN$', '\C$']
+  filter_local:
+    IpAddress: ['127.0.0.1', '::1', '-']
+  condition: selection and not filter_local
+falsepositives: [Admin TI yang melakukan pemeliharaan jarak jauh]
+level: medium
+respons:
+  - Konfirmasi ke admin TI apakah akses ini terjadwal
+  - Bila tidak, nonaktifkan akun yang dipakai dan isolasi host sumber
+---
+title: Layanan PsExec atau layanan mencurigakan dipasang
+id: sigap-win-psexec-service
+status: experimental
+description: Layanan Windows baru (EventID 7045) bernama PSEXESVC atau menjalankan cmd/PowerShell/berkas dari ADMIN$. Ini menandakan eksekusi perintah jarak jauh.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.execution, attack.t1569.002, attack.lateral_movement, attack.t1021.002]
+logsource: { product: windows, service: system }
+detection:
+  selection_id:
+    EventID: 7045
+  selection_svc:
+    - ServiceName|contains: 'PSEXESVC'
+    - ImagePath|contains: ['PSEXESVC', '\ADMIN$', 'cmd.exe /c', 'powershell']
+  condition: selection_id and selection_svc
+falsepositives: [Penggunaan PsExec resmi oleh admin TI]
+level: high
+respons:
+  - Identifikasi host asal koneksi lewat logon tipe 3 pada waktu yang sama
+  - Isolasi server bila tidak ada pemeliharaan terjadwal
+---
+title: Logon RDP ke host HMI/engineering OT
+id: sigap-win-rdp-to-ot-host
+status: experimental
+description: Logon Remote Desktop (tipe 10) ke host HMI atau engineering. Akses jarak jauh ke sistem kendali seharusnya sangat terbatas.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.lateral_movement, attack.t1021.001, attack.t0886]
+logsource: { product: windows, service: security }
+detection:
+  selection:
+    EventID: 4624
+    LogonType: 10
+    Computer|startswith: ['HMI-', 'ENG-', 'SCADA-']
+  condition: selection
+falsepositives: [Dukungan jarak jauh vendor yang terjadwal]
+level: high
+respons:
+  - Hubungi operator HMI untuk konfirmasi
+  - Putuskan sesi RDP bila tidak dikenal dan pantau kondisi proses fisik
+---
+title: Arsip terenkripsi dibuat dengan 7-Zip/RAR
+id: sigap-win-archive-password
+status: experimental
+description: Utilitas arsip dijalankan dengan kata sandi. Penyerang sering mengemas data curian dalam arsip terenkripsi sebelum dikirim keluar.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.collection, attack.t1560.001]
+logsource: { product: windows, category: process_creation }
+detection:
+  selection_img:
+    Image|endswith: ['\7z.exe', '\7za.exe', '\7zr.exe', '\rar.exe', '\WinRAR.exe']
+  selection_pwd:
+    CommandLine|contains: [' -p', ' -hp']
+  condition: selection_img and selection_pwd
+falsepositives: [Pengarsipan dokumen rahasia resmi]
+level: medium
+respons:
+  - Amankan berkas arsip sebagai barang bukti
+  - Periksa koneksi keluar dari host ini setelah waktu pembuatan arsip
+---
+title: Log peristiwa Windows dihapus
+id: sigap-win-log-cleared
+status: experimental
+description: Log Security (EventID 1102) atau System (EventID 104) dikosongkan. Penyerang menghapus log untuk menghilangkan jejak.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.defense_evasion, attack.t1070.001]
+logsource: { product: windows }
+detection:
+  selection_security:
+    Channel: Security
+    EventID: 1102
+  selection_system:
+    Channel: System
+    EventID: 104
+  condition: 1 of selection_*
+falsepositives: [Pembersihan log oleh admin (seharusnya tercatat dalam tiket)]
+level: high
+respons:
+  - Segera kumpulkan log dari sumber lain (firewall, Zeek) sebelum ikut terhapus
+  - Anggap host telah dikuasai penyerang
+---
+title: Perlindungan Microsoft Defender dimatikan
+id: sigap-win-defender-tamper
+status: experimental
+description: Perintah Set-MpPreference/Add-MpPreference menonaktifkan pemindaian real-time atau menambah pengecualian. Malware melakukannya agar tidak terdeteksi.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.defense_evasion, attack.t1562.001]
+logsource: { product: windows, category: process_creation }
+detection:
+  selection_cmd:
+    CommandLine|contains: ['Set-MpPreference', 'Add-MpPreference']
+  selection_opt:
+    CommandLine|contains: ['DisableRealtimeMonitoring', 'ExclusionPath', 'DisableIOAVProtection', 'DisableBehaviorMonitoring']
+  condition: all of selection_*
+falsepositives: [Konfigurasi antivirus oleh admin]
+level: high
+respons:
+  - Aktifkan kembali perlindungan Defender dan jalankan pemindaian penuh
+  - Periksa folder yang dikecualikan
+---
+title: Unduhan berkas lewat certutil
+id: sigap-win-certutil-download
+status: experimental
+description: certutil.exe dipakai untuk mengunduh berkas (urlcache/verifyctl). Alat bawaan Windows ini sering disalahgunakan untuk menarik malware.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.command_and_control, attack.t1105]
+logsource: { product: windows, category: process_creation }
+detection:
+  selection:
+    Image|endswith: '\certutil.exe'
+    CommandLine|contains: ['urlcache', 'verifyctl']
+  condition: selection
+falsepositives: [Hampir tidak ada]
+level: high
+respons:
+  - Ambil berkas hasil unduhan sebagai barang bukti dan hitung hash-nya
+---
+title: Akun lokal atau domain baru dibuat
+id: sigap-win-account-created
+status: experimental
+description: Akun pengguna baru dibuat (EventID 4720). Penyerang membuat akun cadangan agar tetap punya akses.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.persistence, attack.t1136.001]
+logsource: { product: windows, service: security }
+detection:
+  selection:
+    EventID: 4720
+  condition: selection
+falsepositives: [Pembuatan akun resmi oleh admin TI]
+level: medium
+respons:
+  - Konfirmasi ke admin TI; bila tidak dikenal, nonaktifkan akun tersebut

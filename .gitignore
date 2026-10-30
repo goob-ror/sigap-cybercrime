@@ -5,6 +5,8 @@ build/
 .env*
 .vite/
 vite.config.*.timestamp-*
+.claude
+.vscode
 *.tsbuildinfo
 *-debug.log*
 logs/
@@ -13,3 +15,4 @@ logs/
 
 AGENTS.md
 CLAUDE.md
+docs/
