@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Activity, BookOpenCheck, BookText, ChevronRight, CircleCheck, ClipboardList, Clock3, FileSearch, FileText, Flag, GitBranch, LayoutDashboard, Menu, ScanSearch, ShieldAlert, Trash2, Upload, X } from 'lucide-react'
 import { ClearDataDialog, ConfirmDialog } from '@/components/Dialogs'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { LoadingState } from '@/components/LoadingState'
 import { Badge } from '@/components/ui/Badge'
 import type { Detection, FollowUpStatus } from '@/core/model'
@@ -13,17 +14,19 @@ import { DEFAULT_UNIT_PROFILE } from '@/data/unitProfile'
 import { setFollowUp } from '@/db/cases'
 import { orderedCases, useInvestigation } from '@/db/hooks'
 import { useIngest } from '@/db/ingestClient'
-import { AttackView } from '@/features/attack/AttackView'
-import { CaseView } from '@/features/case/CaseView'
-import { DetailView } from '@/features/detail/DetailView'
-import { GraphView } from '@/features/graph/GraphView'
-import { ImportView } from '@/features/import/ImportView'
-import { PlaybookView } from '@/features/playbook/PlaybookView'
-import { LogExplorer } from '@/features/logs/LogExplorer'
-import { ReportView } from '@/features/report/ReportView'
-import { SummaryView } from '@/features/summary/SummaryView'
-import { TimelineView } from '@/features/timeline/TimelineView'
-import { TriageView } from '@/features/triage/TriageView'
+// Pages are code-split: each loads on demand, keeping the heavy ones (dagre graph, triage, report)
+// out of the initial bundle.
+const AttackView = lazy(() => import('@/features/attack/AttackView').then((m) => ({ default: m.AttackView })))
+const CaseView = lazy(() => import('@/features/case/CaseView').then((m) => ({ default: m.CaseView })))
+const DetailView = lazy(() => import('@/features/detail/DetailView').then((m) => ({ default: m.DetailView })))
+const GraphView = lazy(() => import('@/features/graph/GraphView').then((m) => ({ default: m.GraphView })))
+const ImportView = lazy(() => import('@/features/import/ImportView').then((m) => ({ default: m.ImportView })))
+const PlaybookView = lazy(() => import('@/features/playbook/PlaybookView').then((m) => ({ default: m.PlaybookView })))
+const LogExplorer = lazy(() => import('@/features/logs/LogExplorer').then((m) => ({ default: m.LogExplorer })))
+const ReportView = lazy(() => import('@/features/report/ReportView').then((m) => ({ default: m.ReportView })))
+const SummaryView = lazy(() => import('@/features/summary/SummaryView').then((m) => ({ default: m.SummaryView })))
+const TimelineView = lazy(() => import('@/features/timeline/TimelineView').then((m) => ({ default: m.TimelineView })))
+const TriageView = lazy(() => import('@/features/triage/TriageView').then((m) => ({ default: m.TriageView })))
 import { ENGINE_VERSION } from '@/workers/protocol'
 
 type Page = 'Ringkasan' | 'Impor Data' | 'Timeline' | 'Log Explorer' | 'Detail' | 'ATT&CK' | 'Graf Investigasi' | 'Kasus' | 'Laporan' | 'Playbook' | 'Triase'
@@ -165,7 +168,7 @@ function App() {
         </header>
 
         <main className="p-4 md:p-6">
-          {!data.loaded ? <LoadingState /> : <>
+          {!data.loaded ? <LoadingState /> : <ErrorBoundary key={page}><Suspense fallback={<LoadingState />}>
             {page === 'Ringkasan' && <SummaryView data={data} openImport={() => go('Impor Data')} openCase={openCase} openGraph={openGraph} openTimeline={() => go('Timeline')} openDetail={openDetail} />}
             {page === 'Impor Data' && <ImportView imports={data.imports} eventCount={data.eventCount} detectionCount={data.detections.length} incidentCount={data.incidents.length} check={data.check} busy={ingest.busy} progress={ingest.progress} onFiles={(files) => void runIngest({ type: 'import', files, actor: ACTOR })} onScenario={() => void runIngest({ type: 'scenario', actor: ACTOR }, () => setActive('Ringkasan'))} onDownloadSamples={() => void downloadSamples()} onClear={() => setClearOpen(true)} />}
             {page === 'Timeline' && <TimelineView data={data} selectedId={selectedId} onSelect={setSelectedId} openDetail={openDetail} openImport={() => go('Impor Data')} openCase={openCase} />}
@@ -177,7 +180,7 @@ function App() {
             {page === 'Laporan' && <ReportView data={data} caseId={caseId} selectCase={setCaseId} actor={ACTOR} notify={notify} openImport={() => go('Impor Data')} />}
             {page === 'Playbook' && <PlaybookView />}
             {page === 'Triase' && <TriageView data={data} />}
-          </>}
+          </Suspense></ErrorBoundary>}
         </main>
       </div>
       {confirm && <ConfirmDialog id={confirm.detection.title} status={confirm.status} cancel={() => setConfirm(null)} confirm={applyFollowUp} />}
