@@ -10,6 +10,7 @@ vite.config.*.timestamp-*
 *.tsbuildinfo
 *-debug.log*
 logs/
+collector
 *.log
 .tmp-*
 

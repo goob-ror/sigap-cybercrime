@@ -1,11 +1,16 @@
-import { Download, ShieldAlert, Upload } from 'lucide-react'
+import { useState } from 'react'
+import { CircleCheck, CircleX, Download, FileCheck2, ShieldAlert, ShieldCheck, Upload } from 'lucide-react'
 import { entityTypeLabel, isIndicator } from '@/components/EntityIcon'
 import { Badge } from '@/components/ui/Badge'
+import { Card } from '@/components/ui/Card'
 import { Label } from '@/components/ui/Label'
 import { PageTitle } from '@/components/ui/PageTitle'
 import { Select } from '@/components/ui/Select'
-import type { Detection } from '@/core/model'
+import type { Detection, NormalizedEvent } from '@/core/model'
+import { sha256Hex } from '@/core/evidence/hash'
+import { buildCustodyChain, buildEvidenceFiles, renderManifest, verifyEvidencePackage, type EvidenceInput, type EvidenceVerification } from '@/core/evidence/package'
 import { incidentStory, incidentSummary, priorityActions, scorePercent } from '@/core/report/narrative'
+import { db, type BlobRow } from '@/db/db'
 import { orderedCases, type Investigation } from '@/db/hooks'
 import { RULES } from '@/data/rules/catalog'
 import { fmtDate, fmtDateTime, fmtNumber, fmtTime } from '@/lib/format'
@@ -26,6 +31,8 @@ const decimal = (n: number) => n.toFixed(2).replace('.', ',')
 export function ReportView({ data, caseId, selectCase, actor, notify, openImport }: Props) {
   const list = orderedCases(data)
   const current = list.find((x) => x.c.id === caseId) ?? list[0]
+  const [verify, setVerify] = useState<EvidenceVerification | null>(null)
+  const [evidenceBusy, setEvidenceBusy] = useState(false)
   if (!current?.incident) {
     return <div className="mx-auto grid min-h-[60vh] max-w-xl place-items-center text-center"><div><div className="mx-auto mb-4 grid size-12 place-items-center rounded-xl border border-[#272E3A] bg-[#131720] text-[#7DD3FC]"><Upload size={22} /></div><h1 className="text-lg font-semibold">Belum ada kasus untuk dilaporkan</h1><p className="mt-2 text-sm text-[#7E8998]">Laporan disusun dari data kasus. Impor log atau muat skenario contoh.</p><button onClick={openImport} className="mt-5 rounded-lg bg-[#38BDF8] px-4 py-2 text-xs font-bold text-[#071018]">Buka Impor Data</button></div></div>
   }
@@ -42,8 +49,58 @@ export function ReportView({ data, caseId, selectCase, actor, notify, openImport
   const options = list.map(({ c: x }) => `${x.id} · ${x.title}`)
   const generated = Date.now()
 
+  const caseEvents = [...new Map(dets.flatMap((d) => d.eventIds).map((id) => data.eventsById.get(id)).filter((e): e is NormalizedEvent => !!e).map((e) => [e.id, e])).values()]
+  const buildInput = (): EvidenceInput => ({ case: c, incident, detections: dets, events: caseEvents, sources, actor, generatedAt: Date.now() })
+
+  const exportEvidence = async () => {
+    setEvidenceBusy(true)
+    try {
+      const input = buildInput()
+      const content = buildEvidenceFiles(input)
+      const importIds = [...new Set(sources.map((a) => a.id.replace(/^log-/, '')))]
+      const originals = (await db.blobs.bulkGet(importIds)).filter((b): b is BlobRow => !!b).map((b) => ({ name: `asli/${b.name}`, bytes: b.bytes }))
+      const entries = [
+        ...(await Promise.all(content.map(async (f) => ({ name: f.name, hash: await sha256Hex(f.text) })))),
+        ...(await Promise.all(originals.map(async (o) => ({ name: o.name, hash: await sha256Hex(o.bytes) })))),
+      ]
+      const manifest = renderManifest(entries)
+      const total = content.length + originals.length + 2
+      const chain = await buildCustodyChain(input, await sha256Hex(manifest), total)
+      const { default: JSZip } = await import('jszip')
+      const zip = new JSZip()
+      for (const f of content) zip.file(f.name, f.text)
+      for (const o of originals) zip.file(o.name, o.bytes)
+      zip.file('rantai-bukti.json', JSON.stringify(chain, null, 2))
+      zip.file('MANIFEST-SHA256.txt', manifest)
+      const url = URL.createObjectURL(await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }))
+      const a = Object.assign(document.createElement('a'), { href: url, download: `sigap-bukti-${c.id}.zip` })
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+      notify(`Paket bukti ${c.id} diekspor (${total} berkas, ${originals.length} berkas asli)`)
+    } catch (err) {
+      notify(`Gagal mengekspor paket bukti: ${(err as Error).message}`)
+    } finally {
+      setEvidenceBusy(false)
+    }
+  }
+
+  const verifyPackage = async (file: File) => {
+    setVerify(null)
+    setEvidenceBusy(true)
+    try {
+      const { default: JSZip } = await import('jszip')
+      const zip = await JSZip.loadAsync(await file.arrayBuffer())
+      const files = await Promise.all(Object.values(zip.files).filter((f) => !f.dir).map(async (f) => ({ name: f.name, bytes: await f.async('uint8array') })))
+      setVerify(await verifyEvidencePackage(files))
+    } catch (err) {
+      notify(`Gagal memverifikasi paket: ${(err as Error).message}`)
+    } finally {
+      setEvidenceBusy(false)
+    }
+  }
+
   return <div className="mx-auto max-w-6xl">
-    <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end"><PageTitle eyebrow={`Kasus ${c.id}`} title="Laporan Insiden" text="Disusun otomatis dari data kasus: temuan, korelasi, skor, tindak lanjut, dan catatan. Cetak atau simpan sebagai PDF untuk eskalasi." /><div className="flex flex-wrap gap-2">{list.length > 1 && <Select value={options[list.indexOf(current)]} setValue={(v) => { const i = options.indexOf(v); if (i >= 0) selectCase(list[i].c.id) }} options={options} />}<button onClick={() => { notify('Dialog cetak dibuka — pilih "Simpan sebagai PDF"'); window.setTimeout(() => window.print(), 300) }} className="flex items-center justify-center gap-2 rounded-lg bg-[#38BDF8] px-4 py-2.5 text-xs font-bold text-[#071018]"><Download size={15} />Ekspor PDF</button></div></div>
+    <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end"><PageTitle eyebrow={`Kasus ${c.id}`} title="Laporan Insiden" text="Disusun otomatis dari data kasus: temuan, korelasi, skor, tindak lanjut, dan catatan. Cetak atau simpan sebagai PDF untuk eskalasi." /><div className="flex flex-wrap gap-2">{list.length > 1 && <Select value={options[list.indexOf(current)]} setValue={(v) => { const i = options.indexOf(v); if (i >= 0) selectCase(list[i].c.id) }} options={options} />}<button onClick={() => void exportEvidence()} disabled={evidenceBusy} className="flex items-center justify-center gap-2 rounded-lg border border-[#272E3A] bg-[#191F2A] px-4 py-2.5 text-xs font-semibold hover:border-[#38BDF8]/40 disabled:opacity-50"><ShieldCheck size={15} />Paket Bukti</button><button onClick={() => { notify('Dialog cetak dibuka — pilih "Simpan sebagai PDF"'); window.setTimeout(() => window.print(), 300) }} className="flex items-center justify-center gap-2 rounded-lg bg-[#38BDF8] px-4 py-2.5 text-xs font-bold text-[#071018]"><Download size={15} />Ekspor PDF</button></div></div>
     <article className="report overflow-hidden rounded-xl border border-[#272E3A] bg-[#131720]">
       <div className="border-b border-[#272E3A] bg-[#191F2A] p-6 md:p-8">
         <div className="mb-8 flex items-start justify-between gap-4"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-lg bg-[#38BDF8] text-[#071018]"><ShieldAlert /></div><div><div className="font-bold tracking-[0.18em]">SIGAP</div><div className="text-[10px] text-[#7E8998]">LAPORAN ANALISIS INSIDEN SIBER</div></div></div>{data.check && <Badge className="border-[#F59E0B]/25 bg-[#F59E0B]/10 text-[#FBBF24]">MEMUAT DATA SKENARIO FIKTIF</Badge>}</div>
@@ -63,5 +120,14 @@ export function ReportView({ data, caseId, selectCase, actor, notify, openImport
         <footer className="border-t border-[#272E3A] pt-4 text-[10px] leading-5 text-[#657080]">Dibuat oleh SIGAP pada {fmtDateTime(generated)} untuk {actor}. Laporan ini disusun dari data lokal di perangkat operator; keterkaitan antar-temuan adalah hasil korelasi otomatis dan perlu diverifikasi sebelum menjadi kesimpulan.</footer>
       </div>
     </article>
+    <div className="mt-4 print:hidden"><Card title="Verifikasi Paket Bukti" icon={<FileCheck2 size={16} className="text-[#38BDF8]" />}>
+      <p className="text-xs text-[#8D97A6]">Periksa kembali keaslian berkas ZIP paket bukti: SHA-256 tiap berkas dan rantai bukti berantai-hash. Jika satu berkas diubah, verifikasi akan gagal.</p>
+      <label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[#38BDF8] px-4 py-2 text-xs font-bold text-[#071018]"><Upload size={14} />Pilih berkas ZIP<input type="file" accept=".zip,application/zip" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void verifyPackage(f) }} /></label>
+      {verify && <div className="mt-3">
+        <div className={`rounded-lg border p-3 text-xs ${verify.ok ? 'border-[#22C55E]/30 bg-[#22C55E]/10 text-[#86EFAC]' : 'border-[#EF4444]/30 bg-[#EF4444]/10 text-[#FCA5A5]'}`}>{verify.ok ? <><CircleCheck size={13} className="mr-1 inline" />Paket utuh: semua berkas cocok dan rantai bukti sah.</> : <><CircleX size={13} className="mr-1 inline" />Paket TIDAK utuh — ada yang berubah sejak diekspor.</>}</div>
+        {verify.files.length > 0 && <div className="mt-2 grid gap-1 text-[11px]">{verify.files.map((f) => <div key={f.name} className="flex items-center justify-between gap-2 rounded border border-[#272E3A] bg-[#0D1016] px-2.5 py-1.5"><span className="truncate font-mono text-[#AEB6C1]">{f.name}</span>{f.ok ? <span className="shrink-0 text-[#86EFAC]">cocok</span> : <span className="shrink-0 text-[#FCA5A5]">{f.reason ?? 'gagal'}</span>}</div>)}</div>}
+        <div className="mt-2 flex flex-wrap gap-x-4 text-[10px] text-[#8D97A6]"><span>Rantai bukti: {verify.chain.ok ? 'sah' : `rusak${'reason' in verify.chain ? ` (${verify.chain.reason})` : ''}`}</span><span>Ikatan manifest: {verify.manifestBound ? 'ok' : 'gagal'}</span></div>
+      </div>}
+    </Card></div>
   </div>
 }

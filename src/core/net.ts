@@ -30,3 +30,17 @@ const PRIVATE_RANGES = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.
 export function isPrivateIp(ip: string): boolean {
   return PRIVATE_RANGES.some((range) => ipInCidr(ip, range))
 }
+
+/**
+ * True only for an address a unit could block upstream: a public IPv4, or a global-unicast IPv6
+ * (`2000::/3`). `isPrivateIp` is IPv4-only, so IPv6 is checked here explicitly. The IPv6 test is
+ * fail-safe — it accepts ONLY global unicast, so loopback (`::1`), ULA (`fc00::/7`), link-local
+ * (`fe80::/10`), IPv4-mapped (`::ffff:…`) and malformed values are all treated as non-external and
+ * can never leak into a blocklist.
+ */
+export function isExternalIp(ip: string): boolean {
+  if (!ip) return false
+  const a = ip.trim().toLowerCase()
+  if (a.includes(':')) return /^[0-9a-f:]+$/.test(a) && /^[23][0-9a-f]{0,3}:/.test(a)
+  return ipv4ToInt(ip) !== null && !isPrivateIp(ip)
+}

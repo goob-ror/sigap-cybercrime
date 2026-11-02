@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { Activity, BookOpenCheck, ChevronRight, CircleCheck, ClipboardList, Clock3, FileSearch, FileText, Flag, GitBranch, LayoutDashboard, Menu, ShieldAlert, ShieldCheck, Trash2, Upload, X } from 'lucide-react'
+import { Activity, BookOpenCheck, BookText, ChevronRight, CircleCheck, ClipboardList, Clock3, FileSearch, FileText, Flag, GitBranch, LayoutDashboard, Menu, ScanSearch, ShieldAlert, Trash2, Upload, X } from 'lucide-react'
 import { ClearDataDialog, ConfirmDialog } from '@/components/Dialogs'
 import { LoadingState } from '@/components/LoadingState'
 import { Badge } from '@/components/ui/Badge'
 import type { Detection, FollowUpStatus } from '@/core/model'
+import { sha256Hex } from '@/core/evidence/hash'
+import { blocklistFiles, type BlocklistMeta, type Ioc } from '@/core/report/ioc'
 import { CASE_STATUS_LABEL, caseStatusStyle } from '@/lib/styles'
 import { fmtNumber } from '@/lib/format'
 import { RULE_PACK } from '@/data/rules/catalog'
+import { DEFAULT_UNIT_PROFILE } from '@/data/unitProfile'
 import { setFollowUp } from '@/db/cases'
 import { orderedCases, useInvestigation } from '@/db/hooks'
 import { useIngest } from '@/db/ingestClient'
@@ -15,14 +18,15 @@ import { CaseView } from '@/features/case/CaseView'
 import { DetailView } from '@/features/detail/DetailView'
 import { GraphView } from '@/features/graph/GraphView'
 import { ImportView } from '@/features/import/ImportView'
+import { PlaybookView } from '@/features/playbook/PlaybookView'
 import { LogExplorer } from '@/features/logs/LogExplorer'
 import { ReportView } from '@/features/report/ReportView'
 import { SummaryView } from '@/features/summary/SummaryView'
 import { TimelineView } from '@/features/timeline/TimelineView'
-import { UrlAnalyzer } from '@/features/url/UrlAnalyzer'
+import { TriageView } from '@/features/triage/TriageView'
 import { ENGINE_VERSION } from '@/workers/protocol'
 
-type Page = 'Ringkasan' | 'Impor Data' | 'Timeline' | 'Log Explorer' | 'Detail' | 'ATT&CK' | 'Graf Investigasi' | 'Kasus' | 'Laporan' | 'URL Offline'
+type Page = 'Ringkasan' | 'Impor Data' | 'Timeline' | 'Log Explorer' | 'Detail' | 'ATT&CK' | 'Graf Investigasi' | 'Kasus' | 'Laporan' | 'Playbook' | 'Triase'
 
 const ACTOR = 'operator.satuan'
 
@@ -106,9 +110,30 @@ function App() {
   const openGraph = (id: string) => { setGraphIncident(id); go('Graf Investigasi') }
   const openReport = (id: string) => { setCaseId(id); go('Laporan') }
 
+  // Build and download an offline IOC blocklist package (txt + csv + DNS sinkhole + hashed manifest).
+  const exportBlocklist = async (iocs: Ioc[], scope: string, zipName: string) => {
+    if (!iocs.length) { notify('Tidak ada indikator eksternal untuk diekspor'); return }
+    try {
+      const { default: JSZip } = await import('jszip')
+      const meta: BlocklistMeta = { unit: DEFAULT_UNIT_PROFILE.name, scope, generatedAt: Date.now(), actor: ACTOR }
+      const files = blocklistFiles(iocs, meta)
+      const manifest = await Promise.all(files.map(async (f) => `${await sha256Hex(f.text)}  ${f.name}`))
+      files.push({ name: 'MANIFEST-SHA256.txt', text: `# SHA-256 berkas (verifikasi integritas)\n${manifest.join('\n')}\n` })
+      const zip = new JSZip()
+      for (const f of files) zip.file(f.name, f.text)
+      const url = URL.createObjectURL(await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }))
+      const a = Object.assign(document.createElement('a'), { href: url, download: `${zipName}.zip` })
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+      notify(`Daftar blokir diekspor: ${iocs.length} indikator`)
+    } catch (err) {
+      notify(`Gagal mengekspor daftar blokir: ${(err as Error).message}`)
+    }
+  }
+
   const nav = [
     ['Ringkasan', LayoutDashboard], ['Impor Data', Upload], ['Timeline', Activity], ['Log Explorer', FileSearch], ['Detail', FileText],
-    ['ATT&CK', BookOpenCheck], ['Graf Investigasi', GitBranch], ['Kasus', ClipboardList], ['Laporan', Flag], ['URL Offline', ShieldCheck],
+    ['ATT&CK', BookOpenCheck], ['Graf Investigasi', GitBranch], ['Kasus', ClipboardList], ['Laporan', Flag], ['Playbook', BookText], ['Triase', ScanSearch],
   ] as const
 
   return (
@@ -148,9 +173,10 @@ function App() {
             {page === 'Detail' && <DetailView detection={detailDetection} data={data} actor={ACTOR} changeFollowUp={changeFollowUp} select={setSelectedId} openLogs={(eventId) => { setLogFocus(eventId); setActive('Log Explorer') }} openTimeline={() => go('Timeline')} openCase={openCase} />}
             {page === 'ATT&CK' && <AttackView detections={data.detections} select={openDetail} />}
             {page === 'Graf Investigasi' && <GraphView data={data} incidentId={graphIncident} selectIncident={setGraphIncident} openDetail={openDetail} openImport={() => go('Impor Data')} />}
-            {page === 'Kasus' && <CaseView data={data} caseId={caseId} selectCase={setCaseId} actor={ACTOR} notify={notify} changeFollowUp={changeFollowUp} openDetail={openDetail} openGraph={openGraph} openReport={openReport} openImport={() => go('Impor Data')} />}
+            {page === 'Kasus' && <CaseView data={data} caseId={caseId} selectCase={setCaseId} actor={ACTOR} notify={notify} changeFollowUp={changeFollowUp} openDetail={openDetail} openGraph={openGraph} openReport={openReport} exportBlocklist={exportBlocklist} openImport={() => go('Impor Data')} />}
             {page === 'Laporan' && <ReportView data={data} caseId={caseId} selectCase={setCaseId} actor={ACTOR} notify={notify} openImport={() => go('Impor Data')} />}
-            {page === 'URL Offline' && <UrlAnalyzer />}
+            {page === 'Playbook' && <PlaybookView />}
+            {page === 'Triase' && <TriageView data={data} />}
           </>}
         </main>
       </div>

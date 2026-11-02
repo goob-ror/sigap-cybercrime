@@ -6,6 +6,10 @@ import type { ScenarioCheck } from '@/workers/protocol'
 /** Derived values the worker computes after each import. */
 export type MetaRow = { key: 'stats'; value: EventStats } | { key: 'check'; value: ScenarioCheck } | { key: 'engine'; value: string }
 
+/** Original bytes of an imported log file, kept so the evidence package can bundle it and the
+ *  engine can re-parse it when the parser changes. Keyed by `importId`. */
+export type BlobRow = { id: string; name: string; bytes: Uint8Array }
+
 /** Local IndexedDB store. Everything stays in the operator's browser; nothing is sent anywhere. */
 export class SigapDb extends Dexie {
   events!: EntityTable<NormalizedEvent, 'id'>
@@ -15,6 +19,7 @@ export class SigapDb extends Dexie {
   artifacts!: EntityTable<Artifact, 'id'>
   custody!: EntityTable<CustodyEntry, 'seq'>
   meta!: EntityTable<MetaRow, 'key'>
+  blobs!: EntityTable<BlobRow, 'id'>
 
   constructor() {
     super('sigap')
@@ -28,6 +33,7 @@ export class SigapDb extends Dexie {
       custody: 'seq, artifactId, ts',
     })
     this.version(2).stores({ meta: 'key' })
+    this.version(3).stores({ blobs: 'id' })
   }
 }
 

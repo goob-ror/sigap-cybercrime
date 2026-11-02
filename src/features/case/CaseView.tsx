@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { Activity, ArrowRight, ClipboardList, FileSearch, FileText, GitBranch, History, ShieldAlert, StickyNote, Upload, UserRound } from 'lucide-react'
+import { Activity, ArrowRight, Ban, BookText, CheckSquare, ClipboardList, FileSearch, FileText, GitBranch, History, ShieldAlert, StickyNote, Upload, UserRound } from 'lucide-react'
 import { ScoreBreakdown } from '@/components/ScoreBreakdown'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Label } from '@/components/ui/Label'
 import { PageTitle } from '@/components/ui/PageTitle'
-import type { Case, CaseStatus, Detection, FollowUpStatus } from '@/core/model'
+import type { Case, CaseStatus, Detection, FollowUpStatus, Incident } from '@/core/model'
+import { allIocs, type Ioc } from '@/core/report/ioc'
 import { incidentStory, incidentSummary, scorePercent } from '@/core/report/narrative'
-import { setAssignee, setCaseStatus, setNotes } from '@/db/cases'
+import { recommendPlaybooks, playbookSteps } from '@/data/playbooks'
+import { setAssignee, setCaseStatus, setNotes, toggleStep } from '@/db/cases'
 import { orderedCases, type Investigation } from '@/db/hooks'
 import { RULES } from '@/data/rules/catalog'
 import { fmtDate, fmtDateTime, fmtNumber, fmtTime } from '@/lib/format'
@@ -23,13 +25,14 @@ type Props = {
   openDetail: (detectionId: string) => void
   openGraph: (incidentId: string) => void
   openReport: (caseId: string) => void
+  exportBlocklist: (iocs: Ioc[], scope: string, zipName: string) => void
   openImport: () => void
 }
 
 const STATUSES: CaseStatus[] = ['Open', 'Investigating', 'Resolved']
 const FOLLOW_UPS: FollowUpStatus[] = ['Baru', 'Berjalan', 'Selesai']
 
-export function CaseView({ data, caseId, selectCase, actor, notify, changeFollowUp, openDetail, openGraph, openReport, openImport }: Props) {
+export function CaseView({ data, caseId, selectCase, actor, notify, changeFollowUp, openDetail, openGraph, openReport, exportBlocklist, openImport }: Props) {
   const list = orderedCases(data)
   const current = list.find((x) => x.c.id === caseId) ?? list[0]
 
@@ -39,6 +42,7 @@ export function CaseView({ data, caseId, selectCase, actor, notify, changeFollow
 
   const { c, incident } = current
   const incidents = data.incidents.filter((i) => i.caseId === c.id)
+  const iocs = allIocs(incidents, data.detectionsById)
   const dets = incidents.flatMap((i) => i.detectionIds).map((id) => data.detectionsById.get(id)).filter((d): d is Detection => !!d).sort((a, b) => a.ts - b.ts)
   const steps = incident ? incidentStory(incident, data.detectionsById, data.eventsById) : []
   const done = dets.filter((d) => c.followUps[d.id] === 'Selesai').length
@@ -78,6 +82,7 @@ export function CaseView({ data, caseId, selectCase, actor, notify, changeFollow
             <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-left text-xs"><thead className="text-[9px] uppercase tracking-wider text-[#657080]"><tr className="border-b border-[#272E3A]">{['Waktu', 'Temuan', 'Tingkat', 'Tindak lanjut'].map((h) => <th key={h} className="pb-2 pr-3">{h}</th>)}</tr></thead>
               <tbody>{[...dets].sort((a, b) => LEVEL_RANK[b.level] - LEVEL_RANK[a.level] || a.ts - b.ts).map((d) => <tr key={d.id} className="border-b border-[#1D232D] last:border-0"><td className="py-2 pr-3 font-mono text-[11px] text-[#AEB6C1]">{fmtTime(d.ts, false)}</td><td className="max-w-[320px] pr-3"><button onClick={() => openDetail(d.id)} className="truncate text-left hover:text-[#7DD3FC]">{d.title}</button></td><td className="pr-3"><Badge className={levelStyle[d.level]}>{LEVEL_LABEL[d.level]}</Badge></td><td><select aria-label={`Tindak lanjut ${d.title}`} value={c.followUps[d.id] ?? 'Baru'} onChange={(e) => changeFollowUp(c.id, d, e.target.value as FollowUpStatus)} className="rounded border border-[#272E3A] bg-[#0D1016] px-2 py-1 text-[11px]">{FOLLOW_UPS.map((s) => <option key={s}>{s}</option>)}</select></td></tr>)}</tbody></table></div>
           </Card>
+          {incident && <PlaybookCard key={`pb-${c.id}`} incident={incident} c={c} actor={actor} />}
         </div>
 
         <div className="space-y-4">
@@ -87,6 +92,7 @@ export function CaseView({ data, caseId, selectCase, actor, notify, changeFollow
             <AssigneeField key={c.id} c={c} actor={actor} notify={notify} />
             <div className="mt-4 grid grid-cols-2 gap-2">{[['Tindak lanjut selesai', `${done}/${dets.length}`], ['Langkah respons', `${stepsDone}/${stepsTotal}`]].map(([a, b]) => <div key={a} className="rounded-lg bg-[#0D1016] p-3"><div className="text-[9px] uppercase text-[#657080]">{a}</div><div className="mt-1 font-mono text-lg">{b}</div></div>)}</div>
             <div className="mt-4 grid grid-cols-2 gap-2">{incident && <button onClick={() => openGraph(incident.id)} className="flex items-center justify-center gap-2 rounded-lg border border-[#272E3A] bg-[#191F2A] py-2 text-xs font-semibold hover:border-[#38BDF8]/40"><GitBranch size={13} />Graf</button>}<button onClick={() => openReport(c.id)} className="flex items-center justify-center gap-2 rounded-lg bg-[#38BDF8] py-2 text-xs font-bold text-[#071018]"><FileText size={13} />Laporan</button></div>
+            <button onClick={() => exportBlocklist(iocs, `Kasus ${c.id}`, `sigap-blokir-${c.id}`)} disabled={!iocs.length} title="Unduh daftar IP/domain/hash eksternal untuk diblokir di firewall & DNS satuan" className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 py-2 text-xs font-semibold text-[#FCA5A5] hover:border-[#EF4444]/60 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[#EF4444]/30"><Ban size={13} />Ekspor daftar blokir (IOC){iocs.length ? ` · ${iocs.length}` : ''}</button>
             <p className="mt-3 text-[10px] leading-4 text-[#657080]">Tersimpan di IndexedDB browser ini dan tetap ada setelah impor log tambahan.</p>
           </Card>
           {incident && <Card title="Mengapa skor ini?" icon={<ShieldAlert size={16} className="text-[#F59E0B]" />}><ScoreBreakdown incident={incident} limit={5} /></Card>}
@@ -122,4 +128,19 @@ function AssigneeField({ c, actor, notify }: { c: Case; actor: string; notify: (
     notify(value.trim() ? `${c.id} ditugaskan kepada ${value.trim()}` : `Penugasan ${c.id} dikosongkan`)
   }
   return <div className="mt-4"><Label>Petugas penanganan</Label><input value={value} onChange={(e) => setValue(e.target.value)} onBlur={save} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} maxLength={80} placeholder="Nama / pangkat petugas" className="h-9 w-full rounded-lg border border-[#272E3A] bg-[#0D1016] px-3 text-xs outline-none focus:border-[#38BDF8]/60" /></div>
+}
+
+function PlaybookCard({ incident, c, actor }: { incident: Incident; c: Case; actor: string }) {
+  const recommended = recommendPlaybooks(incident)
+  const [pbId, setPbId] = useState(recommended[0]?.id ?? '')
+  const pb = recommended.find((p) => p.id === pbId) ?? recommended[0]
+  if (!pb) return <Card title="Playbook Penanganan" icon={<BookText size={16} className="text-[#38BDF8]" />}><p className="text-xs text-[#657080]">Belum ada playbook yang cocok untuk insiden ini.</p></Card>
+  const steps = playbookSteps(pb)
+  const done = steps.filter((s) => c.playbookProgress[s.id]).length
+  return <Card title="Playbook Penanganan" icon={<BookText size={16} className="text-[#38BDF8]" />}>
+    {recommended.length > 1 && <div className="mb-3 flex flex-wrap gap-1.5">{recommended.map((p) => <button key={p.id} onClick={() => setPbId(p.id)} className={`rounded-lg border px-2.5 py-1 text-left text-[11px] ${p.id === pb.id ? 'border-[#38BDF8] bg-[#38BDF8]/10 text-[#7DD3FC]' : 'border-[#272E3A] text-[#8D97A6] hover:text-white'}`}>{p.title}</button>)}</div>}
+    <p className="text-xs leading-5 text-[#8D97A6]">{pb.summary}</p>
+    <div className="mt-1 font-mono text-[10px] text-[#657080]">{done}/{steps.length} langkah selesai</div>
+    <div className="mt-3 space-y-4">{pb.phases.map((ph, pi) => <div key={ph.title}><Label>{ph.title}</Label><div className="mt-1 space-y-1.5">{ph.steps.map((s, si) => { const key = `pb:${pb.id}#${pi}-${si}`; const isDone = !!c.playbookProgress[key]; return <div key={key} className="flex items-start gap-2.5 rounded-lg border border-[#272E3A] bg-[#0D1016] p-2.5"><button title={isDone ? 'Buka kembali' : 'Tandai selesai'} aria-pressed={isDone} onClick={() => void toggleStep(c.id, key, s, actor)} className={`mt-0.5 ${isDone ? 'text-[#22C55E]' : 'text-[#56606E]'}`}><CheckSquare size={16} /></button><span className={`flex-1 text-xs leading-5 ${isDone ? 'text-[#7E8998] line-through' : 'text-[#C3CAD3]'}`}>{s}</span></div> })}</div></div>)}</div>
+  </Card>
 }

@@ -92,5 +92,5 @@ yang diimpor ke SIGAP.
 - Tanpa Sysmon maupun audit proses, aksi `encoded` / `schtask` / `archive` bisa
   tidak tercatat; `akun` (4720), `logon` (4625), dan `layanan` (7045) tetap
   tercatat karena memakai log Security/System bawaan.
-- `collector/sigap-collect.ps1` (sisi pertahanan, pengekspor log read-only)
-  menyusul di Fase 3.
+- `collector/sigap-collect.ps1` (sisi pertahanan, pengekspor log read-only) adalah
+  pasangan skrip ini — lihat [`../collector/README.md`](../collector/README.md).

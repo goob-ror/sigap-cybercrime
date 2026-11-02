@@ -45,6 +45,8 @@ async function ingestFiles(inputs: Input[], actor: string, steps: number) {
     const analysis: LogAnalysis = { format: result.format, formatLabel: FORMAT_LABEL[result.format], eventCount: result.events.length, errorCount: result.errorCount, errors: result.errors.slice(0, 10) }
     const artifact: Artifact = { id: `log-${importId}`, filename: input.name, sha256, size: input.bytes.byteLength, mime: 'text/plain', kind: 'log', addedAt: Date.now(), addedBy: actor, analysis }
     await db.artifacts.put(artifact)
+    // Keep the original bytes so the evidence package can bundle them and the engine can re-parse.
+    await db.blobs.put({ id: importId, name: input.name, bytes: input.bytes })
     await custody({ ts: Date.now(), actor, action: 'imported', artifactId: artifact.id, artifactSha256: sha256, detail: `Impor ${input.name} (${analysis.formatLabel}, ${result.events.length} event)` })
     events += result.events.length
     files.push({ name: input.name, format: analysis.formatLabel, events: result.events.length, errors: result.errorCount })
@@ -81,6 +83,19 @@ async function scenarioCheck(events: readonly NormalizedEvent[], detections: rea
     }
   }
   return check
+}
+
+/** Re-parses every stored original file (parser may have changed), replacing that file's events. */
+async function reparseFromBlobs(): Promise<number> {
+  const blobs = await db.blobs.toArray()
+  for (const b of blobs) {
+    const result = ingestText(decodeText(b.bytes), b.name, b.id)
+    await db.events.where('importId').equals(b.id).delete()
+    for (let start = 0; start < result.events.length; start += CHUNK) {
+      await db.events.bulkPut(result.events.slice(start, start + CHUNK))
+    }
+  }
+  return blobs.length
 }
 
 /** Re-runs detection and correlation over every stored event, then stores the results. */
@@ -129,11 +144,15 @@ async function handle(request: IngestRequest): Promise<IngestResponse> {
       const inputs = scenario.files.map((f) => ({ name: f.name, bytes: new TextEncoder().encode(f.text) }))
       return { type: 'done', summary: await importAndAnalyze(inputs, request.actor) }
     }
-    case 'reanalyze':
+    case 'reanalyze': {
+      // On an engine upgrade, re-parse originals first (parser may have changed), then re-analyze.
+      const reparsed = await reparseFromBlobs()
+      if (reparsed) post({ type: 'progress', message: `Mengurai ulang ${reparsed} berkas asli`, done: 0, total: 2 })
       return { type: 'done', summary: { files: [], events: 0, ...(await analyze(2)) } }
+    }
     case 'clear':
-      await db.transaction('rw', [db.events, db.detections, db.incidents, db.cases, db.artifacts, db.custody, db.meta], async () => {
-        await Promise.all([db.events.clear(), db.detections.clear(), db.incidents.clear(), db.cases.clear(), db.artifacts.clear(), db.custody.clear(), db.meta.clear()])
+      await db.transaction('rw', [db.events, db.detections, db.incidents, db.cases, db.artifacts, db.custody, db.meta, db.blobs], async () => {
+        await Promise.all([db.events.clear(), db.detections.clear(), db.incidents.clear(), db.cases.clear(), db.artifacts.clear(), db.custody.clear(), db.meta.clear(), db.blobs.clear()])
       })
       return { type: 'done', summary: { files: [], events: 0, totalEvents: 0, detections: 0, incidents: 0, rules: pack.sigma.length + pack.native.length } }
   }

@@ -1,6 +1,7 @@
 import { Cpu, FileText, Fingerprint, Globe, Globe2, Monitor, UserRound, type LucideIcon } from 'lucide-react'
 import type { EntityType, IncidentEntity } from '@/core/model'
-import { isPrivateIp } from '@/core/net'
+import { isExternalIp } from '@/core/net'
+import { isIndicator } from '@/core/report/ioc'
 
 const ICONS: Record<EntityType, LucideIcon> = { host: Monitor, device: Cpu, user: UserRound, ip: Globe2, domain: Globe, hash: Fingerprint, file: FileText }
 
@@ -9,16 +10,11 @@ export function entityTypeLabel(e: Pick<IncidentEntity, 'type' | 'value'>): stri
     case 'host': return 'Host'
     case 'device': return 'Perangkat OT'
     case 'user': return 'Akun'
-    case 'ip': return isPrivateIp(e.value) ? 'IP internal' : 'IP eksternal'
+    case 'ip': return isExternalIp(e.value) ? 'IP eksternal' : 'IP internal'
     case 'domain': return 'Domain'
     case 'hash': return 'Hash berkas'
     case 'file': return 'Berkas'
   }
-}
-
-/** External addresses and domains are what a unit would block (indicators of compromise). */
-export function isIndicator(e: Pick<IncidentEntity, 'type' | 'value' | 'common'>): boolean {
-  return !e.common && ((e.type === 'ip' && !isPrivateIp(e.value)) || e.type === 'domain' || e.type === 'hash')
 }
 
 /** Colour family per entity type: OT amber, indicators red, the rest blue. */
@@ -35,4 +31,4 @@ export function EntityIcon({ entity, size = 14 }: { entity: Pick<IncidentEntity,
   return <span className="grid size-7 shrink-0 place-items-center rounded-lg border" style={{ color: tone.fg, background: tone.bg, borderColor: tone.border }}><Icon size={size} /></span>
 }
 
-export { ICONS as ENTITY_ICONS }
+export { ICONS as ENTITY_ICONS, isIndicator }
