@@ -71,6 +71,23 @@ export function decodeText(bytes: Uint8Array): string {
   return new TextDecoder('utf-8').decode(bytes)
 }
 
+/** True for gzip data (magic bytes 1f 8b), e.g. cPanel "Raw Access" downloads and rotated logs. */
+export function isGzip(bytes: Uint8Array): boolean {
+  return bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b
+}
+
+/** Decompresses gzip offline with the platform's DecompressionStream (browsers and Node 18+). */
+export async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
+  const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream('gzip'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+
+/** A log file's text and logical name: gzip is unpacked and `.gz` dropped from the name. */
+export async function readLogFile(bytes: Uint8Array, name: string): Promise<{ text: string; name: string }> {
+  if (!isGzip(bytes)) return { text: decodeText(bytes), name }
+  return { text: decodeText(await gunzip(bytes)), name: name.replace(/\.gz$/i, '') }
+}
+
 /** Splits text into non-empty lines, keeping 1-based line numbers. */
 export function* lines(text: string): Generator<[number, string]> {
   let lineNo = 0

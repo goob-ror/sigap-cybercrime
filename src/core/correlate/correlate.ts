@@ -1,7 +1,7 @@
 import type { Detection, EntityType, Incident, IncidentEntity, Level, NormalizedEvent, Relation, ScoreTerm, SourceKind, UnitProfile } from '@/core/model'
 import { KIND_LABEL, LEVEL_RANK } from '@/core/labels'
 import { cleanIp } from '@/core/ingest/util'
-import { ipInCidr, isPrivateIp } from '@/core/net'
+import { ipInCidr, isExternalIp, isPrivateIp } from '@/core/net'
 import { TACTIC_LABEL, TACTIC_ORDER, tacticOf } from '@/data/attack'
 
 /**
@@ -88,11 +88,11 @@ function answerIps(e: NormalizedEvent): string[] {
 }
 
 /**
- * Host the event happened on. Firewall and sensor logs name the device that logged the traffic,
- * which is not a party to it, so only endpoint logs count.
+ * Host the event happened on. Endpoint and server logs are written by the host itself; firewall
+ * and sensor logs name the device that logged the traffic, which is not a party to it.
  */
 function recordHost(e: NormalizedEvent): string | undefined {
-  return e.sourceKind === 'endpoint' ? e.host : undefined
+  return e.sourceKind === 'endpoint' || e.sourceKind === 'server' ? e.host : undefined
 }
 
 function eventEntities(e: NormalizedEvent, ctx: Context): Occurrence[] {
@@ -139,6 +139,8 @@ function netLabel(e: NormalizedEvent): string {
 }
 
 function remoteLabel(e: NormalizedEvent): string {
+  if (e.dataset === 'web.access') return `HTTP ${str(e.fields['cs-method']) ?? ''}`.trim()
+  if (e.dataset === 'linux.auth') return e.fields.outcome === 'failure' ? 'SSH gagal' : e.fields.outcome === 'success' ? 'SSH login' : 'akses'
   switch (e.fields.EventID) {
     case 4624: return 'logon'
     case 4625: return 'logon gagal'
@@ -149,6 +151,12 @@ function remoteLabel(e: NormalizedEvent): string {
 }
 
 function userLabel(e: NormalizedEvent): string {
+  if (e.dataset === 'linux.auth') {
+    if (e.fields.new_user) return 'akun dibuat'
+    if (e.fields.group) return 'ditambah ke grup'
+    if (e.fields.command) return 'sudo'
+    return e.fields.outcome === 'failure' ? 'login gagal' : e.fields.outcome === 'success' ? 'login' : 'akun'
+  }
   switch (e.fields.EventID) {
     case 4720: return 'akun dibuat'
     case 4625: return 'logon gagal'
@@ -300,18 +308,22 @@ export function correlate(detections: readonly Detection[], events: readonly Nor
       }
     }
 
-    const sourceKinds = (['endpoint', 'network', 'ot', 'mobile'] as SourceKind[]).filter((k) => kinds.has(k))
+    const sourceKinds = (['endpoint', 'server', 'network', 'ot', 'mobile'] as SourceKind[]).filter((k) => kinds.has(k))
     const terms = scoreTerms(dets, sourceKinds)
     const entityList = [...entities.values()].sort((a, b) => a.firstSeen - b.firstSeen)
     const path = entityList.filter((e) => (e.type === 'host' && e.actor) || e.type === 'device').map((e) => e.key).slice(0, 6)
     const top = [...dets].sort((a, b) => LEVEL_RANK[b.level] - LEVEL_RANK[a.level] || a.ts - b.ts)[0]
     const start = path.length ? entities.get(path[0])!.value : undefined
     const hasOt = sourceKinds.includes('ot') || path.some((k) => entities.get(k)!.type === 'device')
+    // An outside address acting on a server we have logs from: an attack on a public-facing service.
+    const attacker = sourceKinds.includes('server') ? entityList.find((e) => e.type === 'ip' && e.actor && !e.common && isExternalIp(e.value)) : undefined
     const title = path.length >= 2 && hasOt
       ? `Serangan lintas IT–OT berawal di ${start}`
       : path.length >= 2
         ? `Pergerakan lateral berawal di ${start}`
-        : `${top.title}${start ? ` di ${start}` : ''}`
+        : attacker && start
+          ? `Peretasan server ${start} dari ${attacker.value}`
+          : `${top.title}${start ? ` di ${start}` : ''}`
 
     return {
       id: `inc-${hash32(dets[0].id)}`,

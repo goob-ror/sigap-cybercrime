@@ -25,7 +25,7 @@ type Props = {
 }
 
 const LEVEL_OPTIONS = ['Semua tingkat', ...(['critical', 'high', 'medium', 'low'] as Level[]).map((l) => LEVEL_LABEL[l])]
-const KIND_OPTIONS = ['Semua sumber', ...(['endpoint', 'network', 'ot'] as SourceKind[]).map((k) => KIND_LABEL[k])]
+const KIND_OPTIONS = ['Semua sumber', ...(['endpoint', 'server', 'network', 'ot'] as SourceKind[]).map((k) => KIND_LABEL[k])]
 
 export function TimelineView({ data, selectedId, onSelect, openDetail, openImport, openCase }: Props) {
   const { detections, eventsById, eventCount } = data

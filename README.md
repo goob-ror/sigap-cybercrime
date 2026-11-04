@@ -31,8 +31,9 @@ yang terjadi** dan **apa yang harus dilakukan**.
 
 SIGAP adalah **kit penanganan awal** yang berjalan sepenuhnya di satu laptop, tanpa internet:
 
-1. **Impor log** dari PC Windows, firewall, sensor jaringan, dan pengendali OT (genset/PLC).
-2. **Deteksi** aktivitas berbahaya dengan 24 aturan (Sigma + agregasi), lintas IT dan OT.
+1. **Impor log** dari PC Windows, server web & Linux (VPS atau cPanel), firewall, sensor jaringan,
+   dan pengendali OT (genset/PLC).
+2. **Deteksi** aktivitas berbahaya dengan 38 aturan (Sigma + agregasi), lintas IT, web, dan OT.
 3. **Korelasi** semua temuan menjadi satu **insiden** berskor, lengkap dengan cerita & graf.
 4. **Respons** dengan playbook Bahasa Indonesia dan daftar blokir IOC untuk firewall/DNS.
 5. **Laporan & bukti**: laporan siap cetak + paket bukti tahan-rusak untuk eskalasi ke PUSSIBERAD.
@@ -64,9 +65,12 @@ sintetis dan fiktif; tidak ada malware nyata.
 
 - 📥 **Impor fleksibel** — log Windows (Sysmon/Security/System/PowerShell), ekspor PowerShell
   (`Get-WinEvent`/`Get-EventLog`), Winlogbeat, evtx_dump, EvtxECmd, firewall (key=value), Zeek
-  (conn/dns/modbus). Deteksi BOM & UTF-16/UTF-8 otomatis.
-- 🔍 **Deteksi** — 24 aturan: 21 bergaya **Sigma** (ditulis sendiri) + 3 aturan agregasi
-  (rentetan logon gagal, unggahan besar, pemindaian Modbus). Dipetakan ke **MITRE ATT&CK** &
+  (conn/dns/modbus), **access log web** (Apache/Nginx/LiteSpeed/cPanel/Plesk, termasuk `.gz`), dan
+  **log auth Linux** (`auth.log`/`secure`). Deteksi BOM & UTF-16/UTF-8 otomatis.
+  Panduan mengambil log web: [docs/PANDUAN_LOG_WEB.md](docs/PANDUAN_LOG_WEB.md).
+- 🔍 **Deteksi** — 38 aturan: 31 bergaya **Sigma** (ditulis sendiri) + 7 aturan agregasi
+  (rentetan logon gagal, unggahan besar, pemindaian Modbus, tebak sandi panel web, sapuan 404,
+  tebak sandi SSH, login SSH setelah rentetan gagal). Dipetakan ke **MITRE ATT&CK** &
   **ATT&CK for ICS**.
 - 🧩 **Korelasi** — temuan yang berbagi entitas dalam 24 jam digabung menjadi satu insiden,
   dengan skor yang dapat dijelaskan `1 − Π(1 − bobot)` + bonus kill-chain & multi-sumber.
@@ -81,6 +85,9 @@ sintetis dan fiktif; tidak ada malware nyata.
 - 🔐 **Paket bukti** — ZIP tahan-rusak (laporan HTML, JSON, berkas asli, rantai bukti berantai-hash,
   MANIFEST SHA-256) + **verifikator** bawaan.
 - 📴 **Offline-first** — tidak ada permintaan ke luar; CSP `connect-src 'self'` pada build produksi.
+- 🛡️ **SIGAP Pos Jaga** (purwarupa) — versi server yang membaca log web/Linux **saat ditulis** dengan
+  mesin yang sama, lalu memberi peringatan sambil serangan berjalan. Satu berkas Node, hanya membaca,
+  tanpa jaringan. Lihat [docs/POS_JAGA.md](docs/POS_JAGA.md).
 
 ---
 
@@ -94,14 +101,16 @@ npm run dev
 ```
 
 Buka http://localhost:5173, lalu **Impor Data → Muat skenario contoh** untuk mencoba alur lengkap
-dengan satu serangan IT→OT fiktif (4.650 event → 24 temuan → 1 insiden berskor 99%).
+dengan dua serangan fiktif: rantai IT→OT dan peretasan portal web satuan (6.296 event → 45 temuan →
+2 insiden berskor 99%, 0 event normal salah ditandai).
 
 | Perintah | Fungsi |
 |---|---|
 | `npm run dev` | Server pengembangan di :5173 |
 | `npm run build` | Typecheck + build produksi ke `dist/` |
 | `npm run preview` | Menyajikan hasil build |
-| `npm test` | 97 tes unit (Vitest) |
+| `npm test` | 117 tes unit (Vitest) |
+| `npm run build:agent` | Build SIGAP Pos Jaga (agen server) ke `dist-agent/pos-jaga.mjs` |
 | `npm run typecheck` | `tsc --noEmit` |
 
 ---

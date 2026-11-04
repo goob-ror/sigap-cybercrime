@@ -4,7 +4,7 @@ import type { IngestError, LogFormat } from '@/core/ingest'
  * Bump when rules, parsing or correlation change: stored results from an older engine are then
  * recomputed from the stored events when the app opens.
  */
-export const ENGINE_VERSION = '2026.11-fase2'
+export const ENGINE_VERSION = '2026.11-fase3-server'
 
 export type IngestRequest = { type: 'import'; files: File[]; actor: string } | { type: 'scenario'; actor: string } | { type: 'reanalyze' } | { type: 'clear' }
 

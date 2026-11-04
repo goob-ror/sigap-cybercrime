@@ -1,7 +1,8 @@
 // Core domain model shared by the ingest, detection, correlation, triage and evidence engines.
 // Pure types only: no React, no storage.
 
-export type SourceKind = 'endpoint' | 'network' | 'ot' | 'mobile'
+/** `server`: logs written by a service on a server (web access log, Linux auth/syslog). */
+export type SourceKind = 'endpoint' | 'server' | 'network' | 'ot' | 'mobile'
 export type Level = 'informational' | 'low' | 'medium' | 'high' | 'critical'
 
 /** Sigma-style log source description, used to decide which rules apply to an event. */

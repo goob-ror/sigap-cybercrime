@@ -1,7 +1,7 @@
-import { Cpu, Monitor, Router, Smartphone } from 'lucide-react'
+import { Cpu, Monitor, Router, Server, Smartphone } from 'lucide-react'
 import type { SourceKind } from '@/core/model'
 
-const ICONS = { endpoint: Monitor, network: Router, ot: Cpu, mobile: Smartphone } as const
+const ICONS = { endpoint: Monitor, server: Server, network: Router, ot: Cpu, mobile: Smartphone } as const
 
 /** Icon for where an event came from. OT gets the amber treatment used across the app. */
 export function KindMark({ kind, size = 13 }: { kind: SourceKind; size?: number }) {

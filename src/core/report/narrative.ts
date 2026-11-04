@@ -41,7 +41,7 @@ function nameIndex(incident: Incident): Map<string, string> {
 function placeOf(d: Detection, eventsById: Map<string, NormalizedEvent>, names: Map<string, string>): string | undefined {
   const e = eventsById.get(d.eventIds[0])
   if (!e) return undefined
-  const host = e.sourceKind === 'endpoint' ? e.host : undefined
+  const host = e.sourceKind === 'endpoint' || e.sourceKind === 'server' ? e.host : undefined
   const src = e.srcIp ? names.get(e.srcIp) ?? e.srcIp : undefined
   const dst = e.dstIp ? names.get(e.dstIp) : undefined
   // Remote activity logged on the target, e.g. a logon on the server from a workstation.

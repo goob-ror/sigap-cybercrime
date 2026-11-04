@@ -1,6 +1,6 @@
 import { db, type MetaRow } from '@/db/db'
 import { FORMAT_LABEL, ingestText } from '@/core/ingest'
-import { decodeText } from '@/core/ingest/util'
+import { readLogFile } from '@/core/ingest/util'
 import { runDetections } from '@/core/detect/engine'
 import { correlate } from '@/core/correlate/correlate'
 import { reconcileCases } from '@/core/correlate/cases'
@@ -38,7 +38,9 @@ async function ingestFiles(inputs: Input[], actor: string, steps: number) {
     const sha256 = await sha256Hex(input.bytes)
     // Same content -> same import id -> same event ids, so re-importing a file does not duplicate it.
     const importId = importIdOf(sha256)
-    const result = ingestText(decodeText(input.bytes), input.name, importId)
+    // gzip (cPanel Raw Access, rotated logs) is unpacked; the hash above stays that of the file as received.
+    const file = await readLogFile(input.bytes, input.name)
+    const result = ingestText(file.text, file.name, importId)
     for (let start = 0; start < result.events.length; start += CHUNK) {
       await db.events.bulkPut(result.events.slice(start, start + CHUNK))
     }
@@ -89,7 +91,8 @@ async function scenarioCheck(events: readonly NormalizedEvent[], detections: rea
 async function reparseFromBlobs(): Promise<number> {
   const blobs = await db.blobs.toArray()
   for (const b of blobs) {
-    const result = ingestText(decodeText(b.bytes), b.name, b.id)
+    const file = await readLogFile(b.bytes, b.name)
+    const result = ingestText(file.text, file.name, b.id)
     await db.events.where('importId').equals(b.id).delete()
     for (let start = 0; start < result.events.length; start += CHUNK) {
       await db.events.bulkPut(result.events.slice(start, start + CHUNK))

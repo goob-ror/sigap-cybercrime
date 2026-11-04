@@ -42,7 +42,7 @@ export function computeStats(events: readonly NormalizedEvent[]): EventStats | n
     if (e.ts > last) last = e.ts
     byDataset[e.dataset] = (byDataset[e.dataset] ?? 0) + 1
     byKind[e.sourceKind] = (byKind[e.sourceKind] ?? 0) + 1
-    if (e.sourceKind === 'endpoint' && e.host) hosts.add(e.host)
+    if ((e.sourceKind === 'endpoint' || e.sourceKind === 'server') && e.host) hosts.add(e.host)
   }
   const bucketMs = bucketSize(last - first)
   const bucketStart = bucketStartOf(first, bucketMs)

@@ -8,6 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "build:agent": "vite build --config vite.agent.config.ts",
+    "pos-jaga": "node dist-agent/pos-jaga.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "oxfmt"

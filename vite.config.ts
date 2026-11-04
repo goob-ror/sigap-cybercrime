@@ -45,5 +45,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // The on-disk module cache keeps stale `import.meta.glob` results, so a new rules/*.yml file
+    // would be missed by the tests. The suite runs in about a second without it.
+    fsModuleCache: false,
   },
 })

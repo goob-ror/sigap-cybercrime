@@ -6,6 +6,17 @@
 export type Technique = { id: string; name: string; tactic: string; domain: 'enterprise' | 'ics' }
 
 const list: Technique[] = [
+  { id: 'T1595', name: 'Active Scanning', tactic: 'Reconnaissance', domain: 'enterprise' },
+  { id: 'T1595.002', name: 'Active Scanning: Vulnerability Scanning', tactic: 'Reconnaissance', domain: 'enterprise' },
+  { id: 'T1595.003', name: 'Active Scanning: Wordlist Scanning', tactic: 'Reconnaissance', domain: 'enterprise' },
+  { id: 'T1190', name: 'Exploit Public-Facing Application', tactic: 'Initial Access', domain: 'enterprise' },
+  { id: 'T1078', name: 'Valid Accounts', tactic: 'Initial Access', domain: 'enterprise' },
+  { id: 'T1059.004', name: 'Unix Shell', tactic: 'Execution', domain: 'enterprise' },
+  { id: 'T1505.003', name: 'Server Software Component: Web Shell', tactic: 'Persistence', domain: 'enterprise' },
+  { id: 'T1098', name: 'Account Manipulation', tactic: 'Persistence', domain: 'enterprise' },
+  { id: 'T1548.003', name: 'Abuse Elevation Control: Sudo and Sudo Caching', tactic: 'Privilege Escalation', domain: 'enterprise' },
+  { id: 'T1110.001', name: 'Brute Force: Password Guessing', tactic: 'Credential Access', domain: 'enterprise' },
+  { id: 'T1083', name: 'File and Directory Discovery', tactic: 'Discovery', domain: 'enterprise' },
   { id: 'T1566.003', name: 'Spearphishing via Service', tactic: 'Initial Access', domain: 'enterprise' },
   { id: 'T1204.002', name: 'User Execution: Malicious File', tactic: 'Execution', domain: 'enterprise' },
   { id: 'T1059', name: 'Command and Scripting Interpreter', tactic: 'Execution', domain: 'enterprise' },
@@ -40,15 +51,17 @@ export const TECHNIQUES = new Map(list.map((t) => [t.id, t]))
 
 /** Rough kill-chain order used to sort tactics on screen. */
 export const TACTIC_ORDER = [
-  'Initial Access', 'Execution', 'Persistence', 'Defense Evasion', 'Credential Access', 'Discovery',
+  'Reconnaissance', 'Initial Access', 'Execution', 'Persistence', 'Privilege Escalation', 'Defense Evasion', 'Credential Access', 'Discovery',
   'Lateral Movement', 'Collection', 'Command and Control', 'Exfiltration', 'Impair Process Control', 'Impact',
 ]
 
 /** Bahasa Indonesia names for the tactics, used in incident stories. */
 export const TACTIC_LABEL: Record<string, string> = {
+  Reconnaissance: 'Pemindaian sasaran',
   'Initial Access': 'Akses awal',
   Execution: 'Eksekusi',
   Persistence: 'Bertahan di sistem',
+  'Privilege Escalation': 'Peningkatan hak akses',
   'Defense Evasion': 'Menghindari pertahanan',
   'Credential Access': 'Pencurian kredensial',
   Discovery: 'Pengintaian',

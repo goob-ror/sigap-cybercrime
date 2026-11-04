@@ -29,6 +29,8 @@ const FORMATS = [
   ['Windows Event Log (JSON)', 'Sysmon, Security, System, PowerShell — dari PowerShell Get-WinEvent / Get-EventLog | ConvertTo-Json (UTF-8 atau UTF-16), Winlogbeat, evtx_dump, atau EvtxECmd'],
   ['Zeek (TSV / JSON)', 'conn, dns, http, modbus, modbus_detailed (gaya ICSNPP)'],
   ['Firewall syslog key=value', 'FortiGate dan perangkat lain dengan format key=value'],
+  ['Access log web', 'Apache, Nginx, LiteSpeed, cPanel (Raw Access, boleh .gz), Plesk — format combined/common. Nama server diambil dari nama berkas, mis. web-satuan-01-access.log'],
+  ['Log auth Linux', '/var/log/auth.log (Debian/Ubuntu) atau /var/log/secure (RHEL/AlmaLinux/cPanel): login SSH, sudo, useradd, usermod'],
 ] as const
 
 /** Read-only export of recent Windows events, for trying SIGAP on one's own machine. */
@@ -53,7 +55,7 @@ export function ImportView({ imports, eventCount, detectionCount, incidentCount,
           <div className="mx-auto mb-3 grid size-12 place-items-center rounded-xl border border-[#38BDF8]/20 bg-[#38BDF8]/10 text-[#7DD3FC]"><FileUp size={22} /></div>
           <div className="text-sm font-semibold">Tarik & lepas berkas log ke sini</div>
           <p className="mt-1 text-xs text-[#7E8998]">Beberapa berkas sekaligus diperbolehkan. Format dikenali otomatis.</p>
-          <input ref={input} type="file" multiple accept=".jsonl,.json,.log,.txt,.ndjson" className="hidden" onChange={(e) => { if (e.target.files?.length) onFiles([...e.target.files]); e.target.value = '' }} />
+          <input ref={input} type="file" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) onFiles([...e.target.files]); e.target.value = '' }} />
           <button disabled={busy} onClick={() => input.current?.click()} className="mt-4 rounded-lg bg-[#38BDF8] px-4 py-2 text-xs font-bold text-[#071018] hover:bg-[#7DD3FC] disabled:opacity-50">Pilih berkas</button>
           {progress && <div className="mx-auto mt-5 max-w-sm text-left"><div className="mb-1 flex justify-between text-[11px] text-[#AEB6C1]"><span>{progress.message}</span><span className="font-mono">{pct}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[#0D1016]"><div className="h-full rounded-full bg-[#38BDF8] transition-all" style={{ width: `${Math.max(5, pct)}%` }} /></div></div>}
         </section>
@@ -68,7 +70,7 @@ export function ImportView({ imports, eventCount, detectionCount, incidentCount,
 
       <div className="space-y-4">
         <Card title="Skenario Contoh" icon={<FlaskConical size={16} className="text-[#F59E0B]" />}>
-          <p className="text-xs leading-5 text-[#AEB6C1]">Satuan fiktif, Senin 2 Nov 2026: ±5.000 event normal dari 9 host, sensor Zeek, firewall, dan pengendali genset — disisipi rantai serangan dari dokumen WhatsApp hingga manipulasi Modbus dan eksfiltrasi.</p>
+          <p className="text-xs leading-5 text-[#AEB6C1]">Satuan fiktif, Senin 2 Nov 2026: ribuan event normal dari host Windows, sensor Zeek, firewall, pengendali genset, dan server portal web — disisipi dua serangan terpisah: rantai dari dokumen WhatsApp hingga manipulasi Modbus dan eksfiltrasi, serta peretasan portal web (SQL injection, web shell, SSH) hingga akun pintu belakang.</p>
           <button disabled={busy} onClick={onScenario} className="mt-4 w-full rounded-lg bg-[#F59E0B] py-2.5 text-xs font-bold text-[#140D02] hover:bg-[#FBBF24] disabled:opacity-50">Muat skenario contoh</button>
           <button disabled={busy} onClick={onDownloadSamples} className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-[#272E3A] py-2 text-xs text-[#AEB6C1] hover:text-white disabled:opacity-50"><Download size={13} />Unduh berkas contoh (untuk uji impor)</button>
           <p className="mt-3 flex gap-2 text-[10px] leading-4 text-[#657080]"><TriangleAlert size={12} className="mt-0.5 shrink-0" />Semua nama, host, dan alamat dalam skenario adalah fiktif.</p>

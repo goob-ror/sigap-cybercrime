@@ -27,17 +27,36 @@ describe('correlation on the demo scenario', () => {
   let detections: Detection[]
   let events: NormalizedEvent[]
   let incident: Incident
+  let web: Incident
+  let itOtDetections: Detection[]
 
   beforeAll(() => {
     events = generateScenario().files.flatMap((f, i) => ingestText(f.text, f.name, `demo-${i}`).events)
     detections = runDetections(events, loadRulePack())
     const result = correlate(detections, events, DEFAULT_UNIT_PROFILE)
-    expect(result.incidents).toHaveLength(1)
-    incident = result.incidents[0]
+    // Two unrelated attacks in the scenario: the IT–OT chain and the web server break-in.
+    expect(result.incidents).toHaveLength(2)
+    incident = result.incidents.find((i) => i.title.startsWith('Serangan lintas IT–OT'))!
+    web = result.incidents.find((i) => i.title.startsWith('Peretasan server'))!
+    const ids = new Set(incident.detectionIds)
+    itOtDetections = detections.filter((d) => ids.has(d.id))
+  })
+
+  it('keeps the web server break-in as its own incident', () => {
+    expect(web.title).toBe('Peretasan server WEB-SATUAN-01 dari 203.0.113.45')
+    expect(web.sourceKinds).toEqual(['server'])
+    expect(web.level).toBe('critical')
+    expect(incident.detectionIds.length + web.detectionIds.length).toBe(detections.length)
+    const keys = web.entities.map((e) => e.key)
+    expect(keys).toEqual(expect.arrayContaining(['ip:203.0.113.45', 'asset:WEB-SATUAN-01', 'user:sysupdate']))
+    // Normal visitors and the admin workstation are not part of it.
+    expect(keys).not.toContain('ip:10.20.4.30')
+    const chain = web.scoreBreakdown.find((t) => t.kind === 'killchain')?.label
+    expect(chain).toMatch(/Pemindaian sasaran → Akses awal/)
   })
 
   it('joins the whole attack chain into one incident', () => {
-    expect(incident.detectionIds).toHaveLength(detections.length)
+    expect(incident.detectionIds).toHaveLength(itOtDetections.length)
     expect(incident.title).toBe('Serangan lintas IT–OT berawal di WS-MIN-03')
     expect(incident.path).toEqual(['asset:WS-MIN-03', 'asset:SRV-SATUAN-01', 'asset:PLC-GENSET-01'])
     expect(incident.level).toBe('critical')
@@ -76,7 +95,7 @@ describe('correlation on the demo scenario', () => {
     expect(steps[0].label).toBe('Akses awal')
     expect(steps[0].places).toEqual(['WS-MIN-03'])
     expect(steps.some((s) => s.places.includes('SRV-SATUAN-01 → PLC-GENSET-01'))).toBe(true)
-    expect(steps.flatMap((s) => s.detections)).toHaveLength(detections.length)
+    expect(steps.flatMap((s) => s.detections)).toHaveLength(itOtDetections.length)
     const summary = incidentSummary(incident, steps)
     expect(summary).toContain('Rangkaian dimulai di WS-MIN-03, berlanjut ke SRV-SATUAN-01, hingga PLC-GENSET-01.')
     const actions = priorityActions(incident, detectionsById, RULES)

@@ -1,0 +1,198 @@
+# SIGAP rule pack — web servers (Apache/Nginx/cPanel/Plesk access logs) and Linux servers (auth log).
+# Fields follow the Sigma webserver taxonomy (c-uri is URL-decoded; see src/core/ingest/weblog.ts)
+# and SIGAP's Linux auth fields (src/core/ingest/syslog.ts). Written by Tim Pengen Seblak for SIGAP.
+title: Percobaan SQL injection pada aplikasi web
+id: sigap-web-sqli
+status: experimental
+description: URL permintaan memuat pola SQL injection (UNION SELECT, OR 1=1, SLEEP, information_schema, dll.). Penyerang mencoba membaca atau mengubah basis data situs.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.initial_access, attack.t1190]
+logsource: { category: webserver }
+detection:
+  selection:
+    c-uri|contains:
+      - 'union select'
+      - 'union all select'
+      - 'union/**/select'
+      - "' or 1=1"
+      - "' or '1'='1"
+      - 'or 1=1--'
+      - 'sleep('
+      - 'benchmark('
+      - 'waitfor delay'
+      - 'information_schema'
+      - 'load_file('
+      - 'into outfile'
+      - '@@version'
+      - 'extractvalue('
+      - 'updatexml('
+  condition: selection
+falsepositives: [Pemindaian keamanan resmi yang terjadwal]
+level: high
+respons:
+  - Blokir alamat IP sumber di firewall atau WAF
+  - Periksa respons berstatus 200 atau berukuran besar ke IP yang sama (indikasi data berhasil dibaca)
+  - Perbaiki kueri aplikasi (parameterized query) dan ganti kata sandi basis data
+---
+title: Percobaan cross-site scripting (XSS)
+id: sigap-web-xss
+status: experimental
+description: URL permintaan memuat skrip atau handler JavaScript. Penyerang mencoba menyisipkan skrip yang berjalan di peramban pengunjung atau admin situs.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.initial_access, attack.t1190]
+logsource: { category: webserver }
+detection:
+  selection:
+    c-uri|contains: ['<script', 'javascript:', 'onerror=', 'onload=', 'document.cookie', '<svg', '<iframe', 'alert(']
+  condition: selection
+falsepositives: [Pemindaian keamanan resmi yang terjadwal]
+level: medium
+respons:
+  - Blokir alamat IP sumber bila berulang
+  - Pastikan aplikasi meng-escape input sebelum ditampilkan
+---
+title: Path traversal atau pembacaan berkas lokal (LFI)
+id: sigap-web-traversal
+status: experimental
+description: URL permintaan berusaha keluar dari folder situs (../) atau membaca berkas sistem seperti /etc/passwd. Bila berhasil, penyerang dapat membaca konfigurasi dan kata sandi.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.initial_access, attack.t1190, attack.discovery, attack.t1083]
+logsource: { category: webserver }
+detection:
+  selection:
+    c-uri|contains: ['../', '..\', '/etc/passwd', '/etc/shadow', 'php://', 'file://', 'win.ini', 'boot.ini', '/proc/self/environ']
+  condition: selection
+falsepositives: [Hampir tidak ada]
+level: high
+respons:
+  - Blokir alamat IP sumber
+  - Periksa apakah permintaan berstatus 200 (berkas mungkin terbaca) dan ganti kredensial yang tersimpan di server
+---
+title: Injeksi perintah atau eksekusi kode jarak jauh lewat web
+id: sigap-web-rce
+status: experimental
+description: URL permintaan memuat perintah sistem (wget/curl, shell, chmod) atau pola Log4Shell. Penyerang mencoba menjalankan perintah di server web.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.initial_access, attack.t1190, attack.execution, attack.t1059.004]
+logsource: { category: webserver }
+detection:
+  selection:
+    c-uri|contains: [';wget ', ';curl ', '|wget ', '|curl ', 'wget http', 'curl http', '|sh', '|bash', '/bin/sh', '/bin/bash', 'chmod +x', 'nc -e', '${jndi:', 'cmd.exe', 'powershell']
+  condition: selection
+falsepositives: [Hampir tidak ada]
+level: high
+respons:
+  - Isolasi server web dari jaringan internal, jangan dimatikan
+  - Periksa proses dan berkas baru di /tmp atau folder unggahan
+  - Blokir alamat IP sumber dan alamat unduhan yang disebut di URL
+---
+title: Pemindai kerentanan otomatis mengakses situs
+id: sigap-web-scanner
+status: experimental
+description: User-agent permintaan berasal dari alat pemindai (sqlmap, Nikto, Nmap, WPScan, Nuclei, dll.). Umumnya tahap awal sebelum serangan terarah.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.reconnaissance, attack.t1595.002]
+logsource: { category: webserver }
+detection:
+  selection:
+    cs-user-agent|contains: ['sqlmap', 'nikto', 'nmap', 'masscan', 'zgrab', 'gobuster', 'dirbuster', 'wpscan', 'nuclei', 'acunetix', 'nessus', 'openvas', 'ffuf', 'feroxbuster', 'whatweb', 'hydra']
+  condition: selection
+falsepositives: [Uji penetrasi resmi oleh tim TI satuan]
+level: medium
+respons:
+  - Konfirmasi ke admin TI apakah ada pemindaian resmi
+  - Bila tidak, blokir alamat IP sumber dan pantau permintaan berikutnya dari jaringan yang sama
+---
+title: Pencarian berkas sensitif di situs
+id: sigap-web-sensitive-files
+status: experimental
+description: Permintaan ke berkas yang tidak boleh terbuka ke publik (.env, .git, cadangan basis data, phpinfo). Penyerang mencari kata sandi, kunci API, atau kode sumber.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.reconnaissance, attack.t1595.003]
+logsource: { category: webserver }
+detection:
+  selection:
+    cs-uri-stem|endswith: ['/.env', '/.git/config', '/.git/HEAD', '/.htpasswd', '/.aws/credentials', '/wp-config.php.bak', '/config.php.bak', '/phpinfo.php', '/server-status', '/backup.zip', '/backup.sql', '/db.sql', '/.DS_Store', '/web.config']
+  condition: selection
+falsepositives: [Pemeriksaan konfigurasi oleh admin situs]
+level: medium
+respons:
+  - Pastikan berkas tersebut tidak dapat diakses publik (status harus 403/404)
+  - Bila ada yang berstatus 200, anggap rahasianya bocor dan ganti segera
+---
+title: Akses web shell di server web
+id: sigap-web-webshell
+status: experimental
+description: Skrip server (PHP/JSP/ASPX) dipanggil dari folder unggahan atau bernama seperti web shell yang dikenal. Ini tanda server sudah disusupi dan penyerang punya kendali jarak jauh.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.persistence, attack.t1505.003]
+logsource: { category: webserver }
+detection:
+  selection_upload_dir:
+    cs-uri-stem|contains: ['/uploads/', '/upload/', '/files/', '/images/', '/img/', '/tmp/', '/media/']
+  selection_script:
+    cs-uri-stem|endswith: ['.php', '.phtml', '.php5', '.phar', '.jsp', '.jspx', '.aspx', '.asp']
+  selection_known:
+    cs-uri-stem|contains: ['c99', 'r57', 'wso.php', 'b374k', 'shell.php', 'cmd.php', 'webshell']
+  filter_missing:
+    sc-status: 404
+  condition: ((selection_upload_dir and selection_script) or selection_known) and not filter_missing
+falsepositives: [Aplikasi lama yang menyimpan skrip di folder unggahan (perlu dibenahi)]
+level: critical
+respons:
+  - Isolasi server web dari jaringan internal, jangan dimatikan
+  - Amankan berkas skrip tersebut sebagai barang bukti (hitung hash) lalu hapus dari server
+  - Periksa log unggahan sebelumnya dan semua IP yang memanggil berkas itu
+---
+title: Akun lokal baru dibuat di server Linux
+id: sigap-linux-useradd
+status: experimental
+description: Akun pengguna baru ditambahkan (useradd). Penyerang membuat akun cadangan agar tetap bisa masuk.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.persistence, attack.t1136.001]
+logsource: { product: linux, service: auth }
+detection:
+  selection:
+    program: useradd
+    message|contains: 'new user'
+  condition: selection
+falsepositives: [Pembuatan akun resmi oleh admin TI]
+level: medium
+respons:
+  - Konfirmasi ke admin TI; bila tidak dikenal, kunci akun (usermod -L) setelah bukti diamankan
+---
+title: Akun ditambahkan ke grup admin di server Linux
+id: sigap-linux-priv-group
+status: experimental
+description: Akun dimasukkan ke grup berhak akses root (sudo, wheel, admin). Penyerang memberi akun cadangannya hak penuh atas server.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.persistence, attack.t1098]
+logsource: { product: linux, service: auth }
+detection:
+  selection:
+    program: [usermod, gpasswd]
+    group: [sudo, wheel, admin, root]
+  condition: selection
+falsepositives: [Penambahan admin resmi (seharusnya tercatat dalam tiket)]
+level: high
+respons:
+  - Keluarkan akun dari grup tersebut setelah bukti diamankan
+  - Periksa siapa yang menjalankan perintah (baris sudo sebelumnya)
+---
+title: Shell root dibuka lewat sudo
+id: sigap-linux-sudo-shell
+status: experimental
+description: Pengguna menjalankan shell (bash/sh) atau su sebagai root melalui sudo. Lazim dipakai penyerang setelah berhasil login untuk mendapat kendali penuh.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.privilege_escalation, attack.t1548.003, attack.execution, attack.t1059.004]
+logsource: { product: linux, service: auth }
+detection:
+  selection:
+    program: sudo
+    command|endswith: ['/bin/bash', '/bin/sh', '/bin/zsh', '/bin/dash', '/usr/bin/bash', '/usr/bin/sh', '/usr/bin/zsh', '/bin/su', '/usr/bin/su', 'su -', 'su root', ' -i']
+  condition: selection
+falsepositives: [Admin TI membuka shell root untuk pemeliharaan (seharusnya tercatat)]
+level: medium
+respons:
+  - Konfirmasi ke pemilik akun apakah ia sedang bekerja di server
+  - Bila tidak, kunci akun tersebut dan periksa perintah-perintah berikutnya

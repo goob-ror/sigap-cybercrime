@@ -4,14 +4,18 @@ import { normalizeWinEvent } from '@/core/ingest/winevent'
 import { isWinEventRecord } from '@/core/ingest/winexport'
 import { normalizeZeek, parseZeekTsv, zeekPathFromFields, zeekPathFromFilename } from '@/core/ingest/zeek'
 import { normalizeKv, parseKvLine } from '@/core/ingest/kv'
+import { hostFromFilename, normalizeAccess, parseAccessLine } from '@/core/ingest/weblog'
+import { normalizeSyslog, parseSyslogLine } from '@/core/ingest/syslog'
 
-export type LogFormat = 'winevent-jsonl' | 'zeek-tsv' | 'zeek-json' | 'kv-syslog' | 'unknown'
+export type LogFormat = 'winevent-jsonl' | 'zeek-tsv' | 'zeek-json' | 'kv-syslog' | 'web-access' | 'linux-syslog' | 'unknown'
 
 export const FORMAT_LABEL: Record<LogFormat, string> = {
   'winevent-jsonl': 'Windows Event Log (JSON)',
   'zeek-tsv': 'Zeek (TSV)',
   'zeek-json': 'Zeek (JSON)',
   'kv-syslog': 'Firewall syslog (key=value)',
+  'web-access': 'Access log web (Apache/Nginx/cPanel)',
+  'linux-syslog': 'Log auth/syslog Linux',
   unknown: 'Tidak dikenali',
 }
 
@@ -61,6 +65,9 @@ export function sniffFormat(text: string): LogFormat {
   const json = firstJson(head)
   if (json) return sniffRecord(json)
   const firstLine = head.split(/\r?\n/, 1)[0]
+  // Before key=value: a sudo line (`TTY=… ; USER=… ; COMMAND=…`) also has key=value pairs.
+  if (parseAccessLine(firstLine)) return 'web-access'
+  if (parseSyslogLine(firstLine)) return 'linux-syslog'
   if (parseKvLine(firstLine)) return 'kv-syslog'
   return 'unknown'
 }
@@ -70,8 +77,12 @@ export type IngestResult = { format: LogFormat; events: NormalizedEvent[]; error
 
 const MAX_REPORTED_ERRORS = 50
 
-/** Parses and normalizes one log file. Event ids are `${importId}:${line}` so re-imports stay stable. */
-export function ingestText(text: string, filename: string, importId: string, opts: { defaultTzOffset?: string } = {}): IngestResult {
+/**
+ * Parses and normalizes one log file. Event ids are `${importId}:${line}` so re-imports stay stable.
+ * `defaultTzOffset` applies to timestamps without a zone (firewall, classic syslog); `defaultYear`
+ * to classic syslog, which omits the year.
+ */
+export function ingestText(text: string, filename: string, importId: string, opts: { defaultTzOffset?: string; defaultYear?: number } = {}): IngestResult {
   const records = wholeJson(text)
   const format = records ? (records.length ? sniffRecord(records[0]) : 'unknown') : sniffFormat(text)
   const events: NormalizedEvent[] = []
@@ -133,8 +144,34 @@ export function ingestText(text: string, filename: string, importId: string, opt
         push(normalizeKv(kv, eventId(lineNo), importId, opts.defaultTzOffset), lineNo, 'Waktu tidak ditemukan (date/time/eventtime)')
       }
       break
+    case 'web-access': {
+      const host = hostFromFilename(filename)
+      for (const [lineNo, line] of lines(text)) {
+        if (line.startsWith('#')) continue
+        const access = parseAccessLine(line)
+        if (!access) {
+          fail(lineNo, 'Bukan baris access log (combined/common)')
+          continue
+        }
+        push(normalizeAccess(access, eventId(lineNo), importId, host), lineNo, 'Waktu tidak valid')
+      }
+      break
+    }
+    case 'linux-syslog': {
+      const year = opts.defaultYear ?? new Date().getFullYear()
+      const offset = opts.defaultTzOffset ?? '+07:00'
+      for (const [lineNo, line] of lines(text)) {
+        const entry = parseSyslogLine(line)
+        if (!entry) {
+          fail(lineNo, 'Bukan baris syslog')
+          continue
+        }
+        push(normalizeSyslog(entry, eventId(lineNo), importId, year, offset), lineNo, 'Waktu tidak valid')
+      }
+      break
+    }
     case 'unknown':
-      fail(1, 'Format berkas tidak dikenali. Didukung: Windows Event JSON (collector SIGAP, Get-WinEvent, Winlogbeat, evtx_dump, EvtxECmd), Zeek TSV/JSON, syslog key=value.')
+      fail(1, 'Format berkas tidak dikenali. Didukung: Windows Event JSON (collector SIGAP, Get-WinEvent, Winlogbeat, evtx_dump, EvtxECmd), Zeek TSV/JSON, syslog key=value, access log web (Apache/Nginx/cPanel/Plesk), dan log auth/syslog Linux.')
       break
   }
   return { format, events, errors, errorCount }

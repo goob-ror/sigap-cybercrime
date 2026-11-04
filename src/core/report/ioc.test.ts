@@ -171,7 +171,7 @@ describe('on the demo scenario (end to end)', () => {
   beforeAll(() => {
     const events: NormalizedEvent[] = generateScenario().files.flatMap((f, i) => ingestText(f.text, f.name, `demo-${i}`).events)
     const detections = runDetections(events, loadRulePack())
-    const incident = correlate(detections, events, DEFAULT_UNIT_PROFILE).incidents[0]
+    const incident = correlate(detections, events, DEFAULT_UNIT_PROFILE).incidents.find((i) => i.title.startsWith('Serangan lintas IT–OT'))!
     iocs = incidentIocs(incident, new Map(detections.map((d) => [d.id, d])))
   })
 

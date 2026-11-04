@@ -12,6 +12,7 @@ export const DEFAULT_UNIT_PROFILE: UnitProfile = {
   uploadThresholdBytes: 500 * 1024 ** 2,
   assets: [
     { name: 'SRV-SATUAN-01', ip: '10.20.1.5', kind: 'it', role: 'Server berkas & aplikasi satuan' },
+    { name: 'WEB-SATUAN-01', ip: '10.20.1.30', kind: 'it', role: 'Server portal web publik (Linux, Nginx)' },
     { name: 'HMI-GENSET-01', ip: '10.40.7.10', kind: 'ot', role: 'HMI pengendali genset' },
     { name: 'PLC-GENSET-01', ip: '10.40.7.22', kind: 'ot', role: 'PLC genset pangkalan' },
   ],

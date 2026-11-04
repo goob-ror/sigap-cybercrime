@@ -24,7 +24,7 @@ describe('demo scenario end to end', () => {
 
   it('loads every rule in the pack', () => {
     expect(pack.skipped).toEqual([])
-    expect(pack.sigma.length + pack.native.length).toBeGreaterThanOrEqual(24)
+    expect(pack.sigma.length + pack.native.length).toBeGreaterThanOrEqual(38)
   })
 
   it('is deterministic', () => {
@@ -33,7 +33,7 @@ describe('demo scenario end to end', () => {
 
   it('produces about five thousand events in every supported format', () => {
     expect(events.length).toBeGreaterThan(4500)
-    expect(new Set(events.map((e) => e.dataset))).toEqual(new Set(['winevent', 'zeek.conn', 'zeek.dns', 'zeek.modbus_detailed', 'kv-syslog']))
+    expect(new Set(events.map((e) => e.dataset))).toEqual(new Set(['winevent', 'zeek.conn', 'zeek.dns', 'zeek.modbus_detailed', 'kv-syslog', 'web.access', 'linux.auth']))
   })
 
   it('flags only attack events (no false positives on the background)', () => {
@@ -67,6 +67,20 @@ describe('demo scenario end to end', () => {
       'sigap-win-archive-password',
       'sigap-native-large-upload',
       'sigap-win-log-cleared',
+      // Web server break-in
+      'sigap-web-sensitive-files',
+      'sigap-native-web-404-scan',
+      'sigap-web-scanner',
+      'sigap-web-sqli',
+      'sigap-native-web-login-brute',
+      'sigap-web-webshell',
+      'sigap-web-rce',
+      'sigap-web-traversal',
+      'sigap-native-ssh-brute-force',
+      'sigap-native-ssh-success-after-failures',
+      'sigap-linux-sudo-shell',
+      'sigap-linux-useradd',
+      'sigap-linux-priv-group',
     ]) {
       expect(fired, id).toContain(id)
     }
