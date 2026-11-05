@@ -11,7 +11,7 @@ vite.config.*.timestamp-*
 .vscode
 *.tsbuildinfo
 *-debug.log*
-logs/
+/logs/
 collector
 *.log
 .tmp-*
