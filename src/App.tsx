@@ -373,7 +373,11 @@ function App() {
       >
         {/* Sidebar logo */}
         <div className="flex h-16 shrink-0 items-center justify-between border-b border-[#161D28] px-5">
-          <div className="flex items-center gap-3">
+          <button
+            className="flex items-center gap-3 rounded-lg transition-opacity hover:opacity-80"
+            onClick={() => go("Ringkasan")}
+            aria-label="Kembali ke Ringkasan"
+          >
             <div className="grid size-9 place-items-center rounded-xl bg-[#38BDF8] text-[#040D18] shadow-lg shadow-[#38BDF8]/20">
               <ShieldAlert size={18} />
             </div>
@@ -385,7 +389,7 @@ function App() {
                 PENANGANAN AWAL INSIDEN
               </div>
             </div>
-          </div>
+          </button>
           <button
             className="rounded-lg p-1 text-[#4A5E72] hover:bg-[#131F2E] hover:text-white lg:hidden"
             onClick={() => setMobileNav(false)}
