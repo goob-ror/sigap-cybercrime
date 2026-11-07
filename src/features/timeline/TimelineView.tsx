@@ -26,6 +26,8 @@ type Props = {
 
 const LEVEL_OPTIONS = ['Semua tingkat', ...(['critical', 'high', 'medium', 'low'] as Level[]).map((l) => LEVEL_LABEL[l])]
 const KIND_OPTIONS = ['Semua sumber', ...(['endpoint', 'server', 'network', 'ot'] as SourceKind[]).map((k) => KIND_LABEL[k])]
+/** Rows drawn at a time: a browser slows badly with tens of thousands of them. */
+const PAGE_SIZE = 200
 
 export function TimelineView({ data, selectedId, onSelect, openDetail, openImport, openCase }: Props) {
   const { detections, eventsById, eventCount } = data
@@ -33,6 +35,7 @@ export function TimelineView({ data, selectedId, onSelect, openDetail, openImpor
   const [level, setLevel] = useState(LEVEL_OPTIONS[0])
   const [kind, setKind] = useState(KIND_OPTIONS[0])
   const [panel, setPanel] = useState(true)
+  const [visible, setVisible] = useState(PAGE_SIZE)
 
   const filtered = useMemo(() => detections.filter((d) => {
     const e = eventsById.get(d.eventIds[0])
@@ -46,7 +49,7 @@ export function TimelineView({ data, selectedId, onSelect, openDetail, openImpor
   const related = useMemo(() => new Set(incident?.detectionIds.filter((id) => id !== selected?.id) ?? []), [incident, selected])
 
   if (detections.length === 0) {
-    return <div className="mx-auto grid min-h-[60vh] max-w-xl place-items-center text-center"><div><div className="mx-auto mb-4 grid size-12 place-items-center rounded-xl border border-[#272E3A] bg-[#131720] text-[#7DD3FC]"><Upload size={22} /></div><h1 className="text-lg font-semibold">{eventCount ? 'Tidak ada temuan' : 'Belum ada data'}</h1><p className="mt-2 text-sm text-[#7E8998]">{eventCount ? `${fmtNumber(eventCount)} event diperiksa dan tidak ada yang memicu aturan deteksi.` : 'Impor log satuan atau muat skenario contoh untuk mulai menganalisis.'}</p><button onClick={openImport} className="mt-5 rounded-lg bg-[#38BDF8] px-4 py-2 text-xs font-bold text-[#071018]">Buka Impor Data</button></div></div>
+    return <div className="mx-auto grid min-h-[60vh] max-w-xl place-items-center text-center"><div><div className="mx-auto mb-4 grid size-12 place-items-center rounded-xl border border-[#272E3A] bg-[#131720] text-[#7DD3FC]"><Upload size={22} /></div><h1 className="text-lg font-semibold">{eventCount ? 'Tidak ada temuan pada data yang tersedia' : 'Belum ada data'}</h1><p className="mt-2 text-sm text-[#7E8998]">{eventCount ? `${fmtNumber(eventCount)} event diperiksa${data.coverage ? `, dan ${data.coverage.rulesWithData} dari ${data.coverage.rulesTotal} aturan memiliki data untuk dibaca` : ''}. Ini bukan jaminan aman: lihat Cakupan Analisis di halaman Ringkasan.` : 'Impor log satuan atau muat skenario contoh untuk mulai menganalisis.'}</p><button onClick={openImport} className="mt-5 rounded-lg bg-[#38BDF8] px-4 py-2 text-xs font-bold text-[#071018]">Buka Impor Data</button></div></div>
   }
 
   const critical = detections.filter((d) => d.level === 'critical' || d.level === 'high').length
@@ -68,7 +71,7 @@ export function TimelineView({ data, selectedId, onSelect, openDetail, openImpor
       <section className="overflow-hidden rounded-xl border border-[#272E3A] bg-[#0D1016]">
         <div className="hidden grid-cols-[112px_40px_minmax(260px,1fr)_140px_100px] gap-3 border-b border-[#272E3A] px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-[#657080] md:grid"><span>Waktu (WIB)</span><span></span><span>Temuan</span><span>Entitas</span><span>Tingkat</span></div>
         {filtered.length === 0 ? <div className="grid min-h-64 place-items-center text-center"><div><Search className="mx-auto mb-3 text-[#536071]" /><div className="text-sm font-medium">Tidak ada temuan yang cocok</div><div className="mt-1 text-xs text-[#687384]">Ubah kata kunci atau filter pencarian.</div></div></div> :
-          filtered.map((d) => {
+          filtered.slice(0, visible).map((d) => {
             const e = eventsById.get(d.eventIds[0])
             const isSelected = selected?.id === d.id
             const rule = RULES.get(d.ruleId)
@@ -81,9 +84,10 @@ export function TimelineView({ data, selectedId, onSelect, openDetail, openImpor
                 <div className="hidden min-w-0 md:block"><div className="truncate font-mono text-[11px]">{e?.host ?? e?.srcIp ?? '—'}</div><div className="mt-1 truncate text-[10px] text-[#7E8998]">{e?.user ?? e?.dstIp ?? ''}</div></div>
                 <div className="hidden md:block"><Badge className={levelStyle[d.level]}>{LEVEL_LABEL[d.level]}</Badge></div>
               </button>
-              {isSelected && <div className="grid grid-cols-1 gap-3 border-t border-[#272E3A]/70 bg-[#0B0E13] px-4 py-3 md:ml-[152px] md:grid-cols-3"><Info title="Aturan terpicu" text={rule?.id ?? d.ruleId} /><Info title="Bukti utama" text={evidence ? `${evidence[0]}: ${evidence[1]}` : '—'} /><div><Label>Korelasi</Label>{incident?.caseId ? <button onClick={() => openCase(incident.caseId!)} className="text-left text-xs text-[#B4BCC7] hover:text-[#7DD3FC]">{incident.caseId} · {related.size} temuan terkait · skor {scorePercent(incident.score)}%</button> : <div className="text-xs text-[#B4BCC7]">Tidak terkait temuan lain</div>}</div></div>}
+              {isSelected && <div className="grid grid-cols-1 gap-3 border-t border-[#272E3A]/70 bg-[#0B0E13] px-4 py-3 md:ml-[152px] md:grid-cols-3"><Info title="Aturan terpicu" text={rule?.id ?? d.ruleId} /><Info title="Bukti utama" text={evidence ? `${evidence[0]}: ${evidence[1]}` : '—'} /><div><Label>Korelasi</Label>{incident?.caseId ? <button onClick={() => openCase(incident.caseId!)} className="text-left text-xs text-[#B4BCC7] hover:text-[#7DD3FC]">{incident.caseId} · {related.size} temuan terkait · skor prioritas {scorePercent(incident.score)}%</button> : <div className="text-xs text-[#B4BCC7]">Tidak terkait temuan lain</div>}</div></div>}
             </div>
           })}
+        {filtered.length > visible && <button onClick={() => setVisible((n) => n + PAGE_SIZE)} className="w-full border-t border-[#272E3A] py-3 text-xs font-semibold text-[#7DD3FC] hover:bg-[#131720]">Tampilkan {fmtNumber(Math.min(PAGE_SIZE, filtered.length - visible))} temuan lagi ({fmtNumber(filtered.length - visible)} belum ditampilkan)</button>}
       </section>
       {panel && selected && <EvidencePanel detection={selected} event={eventsById.get(selected.eventIds[0])} incident={incident} related={incidentNeighbors(selected, incident, data.detectionsById, 6)} close={() => setPanel(false)} openDetail={() => openDetail(selected.id)} openCase={openCase} select={onSelect} />}
       {!panel && <button onClick={() => setPanel(true)} className="fixed bottom-5 right-5 flex items-center gap-2 rounded-lg bg-[#38BDF8] px-4 py-2 text-xs font-semibold text-[#071018]"><PanelLeftClose size={15} />Buka detail</button>}

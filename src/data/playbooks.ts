@@ -27,6 +27,55 @@ const PHASE_PREVENT = 'Pencegahan agar tidak berulang'
 
 export const PLAYBOOKS: Playbook[] = [
   {
+    id: 'ransomware',
+    title: 'Ransomware (berkas terkunci atau cadangan dihapus)',
+    summary: 'Cadangan Windows dihapus, Defender gagal membersihkan ancaman, berkas tidak bisa dibuka, atau muncul catatan tebusan.',
+    tactics: [],
+    ruleHints: ['sigap-win-ransomware-inhibit', 'sigap-win-defender-action-failed'],
+    phases: [
+      { title: PHASE_IMMEDIATE, steps: [
+        'Putuskan host dan server berkas yang terdampak dari jaringan sekarang juga (cabut kabel / matikan Wi-Fi). Jangan dimatikan: kunci enkripsi bisa masih ada di memori.',
+        'Putuskan media dan server cadangan dari jaringan agar tidak ikut terkunci.',
+        'Laporkan ke komandan satuan dan PUSSIBERAD. Jangan menghubungi pelaku dan jangan membayar tebusan.',
+        'Foto catatan tebusan dan catat waktu pertama berkas tidak bisa dibuka.',
+      ] },
+      { title: PHASE_RECOVER, steps: [
+        'Kumpulkan log dari komputer yang masih hidup dan dari firewall, lalu impor ke SIGAP untuk mencari host pertama yang terkena.',
+        'Anggap semua akun yang pernah login di host terdampak bocor; ganti kata sandinya dari perangkat bersih.',
+        'Pulihkan dari cadangan yang terbukti bersih dan instal ulang host. Jangan menyalakan kembali host lama di jaringan.',
+      ] },
+      { title: PHASE_PREVENT, steps: [
+        'Simpan satu salinan cadangan terputus dari jaringan (offline) dan uji pemulihannya secara berkala.',
+        'Batasi hak admin lokal dan akses ke share berkas.',
+        'Latih personel menempuh langkah pertama playbook ini tanpa menunggu instruksi.',
+      ] },
+    ],
+  },
+  {
+    id: 'web-compromise',
+    title: 'Situs atau server web disusupi',
+    summary: 'Web shell, halaman judi online yang tersisip, tampilan situs diubah, atau login server setelah tebak kata sandi.',
+    tactics: [],
+    ruleHints: ['sigap-web-webshell', 'sigap-web-script-in-upload', 'sigap-web-gambling-seo', 'sigap-native-ssh-success-after-failures', 'sigap-web-sensitive-exposed', 'sigap-web-sqli', 'sigap-web-rce', 'sigap-web-traversal'],
+    phases: [
+      { title: PHASE_IMMEDIATE, steps: [
+        'Pastikan dahulu ada tanda berhasil. Pemindaian dan percobaan yang ditolak saja bukan penyusupan, jadi tidak perlu mematikan situs.',
+        'Bila terbukti disusupi, putuskan server dari jaringan internal, jangan dimatikan. Tampilkan halaman pemeliharaan bila situs perlu ditutup.',
+        'Salin log web dan auth ke media terpisah sebelum ikut terhapus.',
+      ] },
+      { title: PHASE_RECOVER, steps: [
+        'Amankan berkas mencurigakan sebagai barang bukti (hitung hash), lalu cari berkas lain yang berubah pada waktu yang sama.',
+        'Ganti kata sandi admin situs, basis data, dan SSH; ganti juga kunci yang tersimpan di konfigurasi.',
+        'Pulihkan situs dari cadangan bersih, lalu perbaiki celah yang dipakai sebelum dibuka kembali.',
+      ] },
+      { title: PHASE_PREVENT, steps: [
+        'Larang skrip berjalan dari folder unggahan lewat konfigurasi server.',
+        'Tutup panel admin dan SSH dari internet, atau batasi menurut alamat.',
+        'Perbarui CMS dan pluginnya secara terjadwal.',
+      ] },
+    ],
+  },
+  {
     id: 'phishing-apk',
     title: 'Berkas/aplikasi berbahaya dari pesan (phishing)',
     summary: 'Personel menerima dokumen ber-makro, pintasan, atau APK lewat WhatsApp/Telegram dari akun yang tampak tepercaya.',

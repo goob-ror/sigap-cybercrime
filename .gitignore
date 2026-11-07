@@ -1,10 +1,12 @@
 node_modules/
 dist/
 dist-agent/
+dist-kit/
 sigap-pos-jaga/
 build/
 .cache/
 .env*
+!.env.example
 .vite/
 vite.config.*.timestamp-*
 .claude
@@ -12,10 +14,8 @@ vite.config.*.timestamp-*
 *.tsbuildinfo
 *-debug.log*
 /logs/
-collector
 *.log
 .tmp-*
 
 AGENTS.md
 CLAUDE.md
-docs/

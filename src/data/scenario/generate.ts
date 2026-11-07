@@ -356,16 +356,32 @@ function background(w: Writers, rng: Rng) {
     const uid = w.conn(at(h, 0, 0, 120), HMI.ip, PLC, 502, 'modbus', 46_000, 98_000)
     for (let m = 0; m < 60; m++) {
       const t = at(h, m, 1, rng.int(0, 900))
-      const volt = 228 + rng.int(-2, 3)
-      const values = [1, volt, 50, rng.int(380, 420), rng.int(70, 82), rng.int(60, 95), rng.int(1, 3), 0, 0, 0, 230, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      const drift = rng.int(-2, 3)
+      const [load, coolant, fuel, alarms] = [rng.int(380, 420), rng.int(70, 82), rng.int(60, 95), rng.int(1, 3)]
+      const { running, setpoint } = gensetState(t)
+      const values = [running ? 1 : 0, running ? setpoint - 2 + drift : 0, running ? 50 : 0, running ? load : 0, coolant, fuel, alarms, 0, 0, 0, setpoint, 0, 0, 0, 0, 0, 0, 0, 0, 0]
       w.modbus(t, uid, HMI.ip, 'READ_HOLDING_REGISTERS', 0, 20, values.join(','))
     }
     if (h === 13) {
-      // Scheduled maintenance: setpoint adjusted from the HMI, within the safe range.
-      w.modbus(at(13, 5, 12), uid, HMI.ip, 'WRITE_SINGLE_REGISTER', 10, 1, '228')
-      w.modbus(at(13, 7, 40), uid, HMI.ip, 'WRITE_SINGLE_REGISTER', 10, 1, '230')
+      // Maintenance happens to set the setpoint again from the HMI, which is what ends the attacker's value.
+      w.modbus(SETPOINT_RESET_AT, uid, HMI.ip, 'WRITE_SINGLE_REGISTER', 10, 1, '228')
+      w.modbus(SETPOINT_NORMAL_AT, uid, HMI.ip, 'WRITE_SINGLE_REGISTER', 10, 1, '230')
     }
   }
+}
+
+// What the attack does to the genset, as its controller reports it to the HMI. The operator starts the
+// genset again from its panel, which leaves no Modbus command and does not touch the setpoint, so the
+// attacker's value stays in place, unnoticed, until maintenance happens to set it again.
+const SETPOINT_ATTACK_AT = at(9, 36, 20, 150)
+const STOP_ATTACK_AT = at(9, 36, 48, 610)
+const PANEL_RESTART_AT = at(9, 52, 30)
+const SETPOINT_RESET_AT = at(13, 5, 12)
+const SETPOINT_NORMAL_AT = at(13, 7, 40)
+
+function gensetState(t: number) {
+  const setpoint = t < SETPOINT_ATTACK_AT ? 230 : t < SETPOINT_RESET_AT ? 265 : t < SETPOINT_NORMAL_AT ? 228 : 230
+  return { setpoint, running: t < STOP_ATTACK_AT || t >= PANEL_RESTART_AT }
 }
 
 // ---- attack chain -------------------------------------------------------------------------
@@ -416,9 +432,9 @@ function attack(w: Writers, rng: Rng) {
     w.modbus(at(9, 31, 5 + Math.floor(reg * 1.5), rng.int(0, 900)), otUid, SRV.ip, 'READ_HOLDING_REGISTERS', reg, 1, String(rng.int(0, 400)), true)
   }
   w.proc(SRV.host, at(9, 36, 18), 'admin.it', P.python, `"${P.python}" C:\\ProgramData\\mbtool.py --target ${PLC} --write 10 265`, P.cmd, true)
-  w.modbus(at(9, 36, 20, 150), otUid, SRV.ip, 'WRITE_SINGLE_REGISTER', 10, 1, '265', true)
+  w.modbus(SETPOINT_ATTACK_AT, otUid, SRV.ip, 'WRITE_SINGLE_REGISTER', 10, 1, '265', true)
   w.proc(SRV.host, at(9, 36, 46), 'admin.it', P.python, `"${P.python}" C:\\ProgramData\\mbtool.py --target ${PLC} --coil 0 off`, P.cmd, true)
-  w.modbus(at(9, 36, 48, 610), otUid, SRV.ip, 'WRITE_SINGLE_COIL', 0, 1, 'F', true)
+  w.modbus(STOP_ATTACK_AT, otUid, SRV.ip, 'WRITE_SINGLE_COIL', 0, 1, 'F', true)
 
   // 7. Collection and exfiltration to anonymous storage.
   w.proc(SRV.host, at(9, 41, 15), 'admin.it', P.sevenZip, `"${P.sevenZip}" a -pS4tuan#26 C:\\ProgramData\\arsip.7z D:\\Dokumen\\Rahasia\\*`, P.cmd, true)

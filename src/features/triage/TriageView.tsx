@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Braces, CircleCheck, Globe2, ListChecks, Search, ShieldCheck, Smartphone, TriangleAlert } from 'lucide-react'
+import { Braces, CircleCheck, Globe2, ListChecks, MessageSquareWarning, Search, ShieldCheck, Smartphone, TriangleAlert } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { Label } from '@/components/ui/Label'
@@ -11,12 +11,15 @@ import { allIocs } from '@/core/report/ioc'
 import { scorePercent } from '@/core/report/narrative'
 import { formatBytes } from '@/core/ingest/kv'
 import { analyzeApkBytes, buildSampleApkBytes } from '@/features/triage/apkFile'
+import { MessageTab } from '@/features/triage/MessageTab'
+import { ReputationPanel } from '@/features/triage/ReputationPanel'
 import { db } from '@/db/db'
 import type { Investigation } from '@/db/hooks'
 import { fmtDate, fmtNumber, fmtTime } from '@/lib/format'
 import { LEVEL_LABEL, levelStyle } from '@/lib/styles'
 
-type Tab = 'url' | 'ioc' | 'apk'
+type Tab = 'url' | 'pesan' | 'ioc' | 'apk'
+type Props = { data: Investigation; actor: string; ownDomains: readonly string[]; notify: (message: string) => void; openSettings: () => void }
 const KIND_LABEL = { ip: 'IP', domain: 'Domain', sha256: 'Hash' } as const
 
 function scoreColor(score: number): string {
@@ -25,7 +28,7 @@ function scoreColor(score: number): string {
   return '#86EFAC'
 }
 
-export function TriageView({ data }: { data: Investigation }) {
+export function TriageView({ data, actor, ownDomains, notify, openSettings }: Props) {
   const [tab, setTab] = useState<Tab>('url')
   const [urlInput, setUrlInput] = useState('http://bri-verif.secure-login.top/akun/update?token=8f2a1c')
   const [report, setReport] = useState<UrlReport | null>(null)
@@ -38,6 +41,7 @@ export function TriageView({ data }: { data: Investigation }) {
   const [apkError, setApkError] = useState('')
 
   const sendToIoc = (value: string) => { setIocText(value); setMatches(null); setTab('ioc') }
+  const inspectUrl = (value: string) => { setUrlInput(value); setReport(analyzeUrl(value)); setTab('url') }
   const loadFromIncidents = () => { setIocText(allIocs(data.incidents, data.detectionsById).map((i) => i.value).join('\n')); setMatches(null) }
   const runMatch = async () => {
     const indicators = parseIndicators(iocText)
@@ -64,13 +68,13 @@ export function TriageView({ data }: { data: Investigation }) {
   const found = matches?.filter((m) => m.events.length > 0) ?? []
 
   return <div className="mx-auto max-w-6xl">
-    <div className="mb-6"><PageTitle eyebrow="Triase Offline" title="Triase Indikator" text="Pemeriksaan cepat berbasis struktur, sepenuhnya di perangkat ini. Tidak ada DNS, request HTTP, atau layanan reputasi eksternal." /></div>
+    <div className="mb-6"><PageTitle eyebrow="Triase" title="Triase Indikator" text="Pemeriksaan cepat di perangkat ini, tanpa DNS atau request ke alamat yang diperiksa. Layanan luar hanya dihubungi bila Anda menekan tombolnya." /></div>
 
-    <div className="mb-4 flex flex-wrap gap-2">{([['url', 'Analisis URL', Globe2], ['ioc', 'Pencocokan IOC', ListChecks], ['apk', 'Pemeriksa APK', Smartphone]] as const).map(([k, label, Icon]) =>
+    <div className="mb-4 flex flex-wrap gap-2">{([['url', 'Analisis URL', Globe2], ['pesan', 'Pesan Mencurigakan', MessageSquareWarning], ['ioc', 'Pencocokan IOC', ListChecks], ['apk', 'Pemeriksa APK', Smartphone]] as const).map(([k, label, Icon]) =>
       <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-semibold ${tab === k ? 'border-[#38BDF8] bg-[#38BDF8]/10 text-[#7DD3FC]' : 'border-[#272E3A] text-[#8D97A6] hover:text-white'}`}><Icon size={14} />{label}</button>)}
     </div>
 
-    {tab === 'url' && <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_.9fr]">
+    {tab === 'url' && <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,.9fr)]">
       <Card title="Inspeksi URL" icon={<Globe2 size={16} className="text-[#38BDF8]" />}>
         <Label>URL untuk diperiksa</Label>
         <textarea value={urlInput} onChange={(e) => setUrlInput(e.target.value)} className="min-h-24 w-full rounded-lg border border-[#272E3A] bg-[#0D1016] p-3 font-mono text-xs outline-none focus:border-[#38BDF8]/50" />
@@ -81,14 +85,17 @@ export function TriageView({ data }: { data: Investigation }) {
         {!report ? <div className="grid h-64 place-items-center text-center text-xs text-[#657080]"><div><Braces className="mx-auto mb-3" />Jalankan analisis untuk melihat sinyal.</div></div>
           : !report.valid ? <p className="rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3 text-xs text-[#FCA5A5]">URL tidak valid. Masukkan tautan HTTP/HTTPS.</p>
             : <>
-              <div className="flex items-center justify-between rounded-lg bg-[#0D1016] p-3"><div className="min-w-0"><div className="truncate font-mono text-xs">{report.host}</div><div className="mt-1 text-[10px] text-[#657080]">{report.signals.length} sinyal · keyakinan heuristik</div></div><div className="font-mono text-2xl" style={{ color: scoreColor(report.score) }}>{scorePercent(report.score)}%</div></div>
+              <div className="flex items-center justify-between rounded-lg bg-[#0D1016] p-3"><div className="min-w-0"><div className="truncate font-mono text-xs">{report.host}</div><div className="mt-1 text-[10px] text-[#657080]">{report.signals.length} sinyal · skor heuristik</div></div><div className="font-mono text-2xl" style={{ color: scoreColor(report.score) }}>{scorePercent(report.score)}%</div></div>
               <div className="mt-3 space-y-2">{report.signals.length === 0 ? <p className="rounded-lg border border-[#22C55E]/25 bg-[#22C55E]/5 p-3 text-xs text-[#86EFAC]">Tidak ada sinyal struktural yang menonjol. Tetap verifikasi lewat jalur resmi.</p>
                 : report.signals.map((s) => <div key={s.id} className="flex items-start gap-2 rounded-lg border border-[#272E3A] p-3 text-xs text-[#AEB6C1]"><TriangleAlert size={14} className="mt-0.5 shrink-0 text-[#F59E0B]" /><span className="min-w-0 flex-1">{s.label}</span><Badge className={levelStyle[s.level]}>{LEVEL_LABEL[s.level]}</Badge></div>)}</div>
               {report.host && <button onClick={() => sendToIoc(report.host!)} className="mt-4 w-full rounded-lg border border-[#272E3A] bg-[#191F2A] py-2 text-xs font-semibold hover:border-[#38BDF8]/40">Cek host ini di log →</button>}
               <p className="mt-3 text-[11px] leading-5 text-[#D4A64B]">Hasil adalah indikasi berbasis struktur, bukan kepastian. Verifikasi tetap diperlukan.</p>
+              {report.host && <ReputationPanel key={`${report.input}`} url={report.input} host={report.host} ownDomains={ownDomains} actor={actor} notify={notify} openSettings={openSettings} />}
             </>}
       </Card>
     </div>}
+
+    {tab === 'pesan' && <MessageTab checkLink={inspectUrl} />}
 
     {tab === 'ioc' && <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.2fr]">
       <Card title="Daftar Indikator" icon={<ListChecks size={16} className="text-[#38BDF8]" />}>
@@ -134,7 +141,7 @@ export function TriageView({ data }: { data: Investigation }) {
                     : <div className="mt-1 space-y-1">{apk.permissions.map((p) => <div key={p.name} className="flex items-center justify-between gap-2 rounded border border-[#272E3A] bg-[#0D1016] px-2.5 py-1.5 text-[11px]"><span className="min-w-0"><span className="text-[#C3CAD3]">{p.label}</span><span className="block truncate font-mono text-[9px] text-[#657080]">{p.name}</span></span><Badge className={levelStyle[p.level]}>{LEVEL_LABEL[p.level]}</Badge></div>)}</div>}
                 </div>
                 {apk.indicators.length > 0 && <div className="mt-4"><Label>Alamat tertanam</Label><div className="mt-1 flex flex-wrap gap-1.5">{apk.indicators.map((v) => <span key={v} className="rounded border border-[#272E3A] bg-[#0D1016] px-2 py-1 font-mono text-[10px] text-[#AEB6C1]">{v}</span>)}</div><button onClick={() => sendToIoc(apk.indicators.join('\n'))} className="mt-2 w-full rounded-lg border border-[#272E3A] bg-[#191F2A] py-2 text-xs font-semibold hover:border-[#38BDF8]/40">Cek alamat ini di log →</button></div>}
-                <p className="mt-3 text-[11px] leading-5 text-[#D4A64B]">Penilaian berdasarkan izin dan string; bukan analisis dinamis. Verifikasi sebelum menyimpulkan.</p>
+                <p className="mt-3 text-[11px] leading-5 text-[#D4A64B]">Penilaian berdasarkan izin dan string, tanpa menjalankan aplikasi. Skor rendah bukan berarti aman, dan aplikasi sah pun dapat meminta izin ini. Jangan pasang aplikasi dari luar sumber resmi; verifikasi sebelum menyimpulkan.</p>
               </>}
       </Card>
     </div>}

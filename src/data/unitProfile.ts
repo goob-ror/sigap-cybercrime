@@ -16,4 +16,6 @@ export const DEFAULT_UNIT_PROFILE: UnitProfile = {
     { name: 'HMI-GENSET-01', ip: '10.40.7.10', kind: 'ot', role: 'HMI pengendali genset' },
     { name: 'PLC-GENSET-01', ip: '10.40.7.22', kind: 'ot', role: 'PLC genset pangkalan' },
   ],
+  // The demo genset's Modbus map. A real controller has its own: see its manual.
+  ot: { runCoils: [0], setpointRegisters: [10], setpointMin: 200, setpointMax: 240, runStatusRegister: 0, measuredRegisters: [{ address: 1, label: 'Tegangan keluaran', unit: 'V' }] },
 }

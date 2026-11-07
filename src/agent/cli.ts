@@ -7,8 +7,10 @@ import { hostFromFilename, clfTime, parseAccessLine } from '@/core/ingest/weblog
 import { parseSyslogLine, syslogTime } from '@/core/ingest/syslog'
 import { LEVEL_LABEL, LEVEL_RANK } from '@/core/labels'
 import type { Level, NormalizedEvent, UnitProfile } from '@/core/model'
-import { priorityActions, scorePercent } from '@/core/report/narrative'
+import { ASSESSMENT, assessmentOf, priorityActions, scorePercent } from '@/core/report/narrative'
 import { TACTIC_LABEL } from '@/data/attack'
+import { parseUnitProfile } from '@/core/profile'
+import { loadRulePack } from '@/data/rules'
 import { RULE_PACK, RULES } from '@/data/rules/catalog'
 import { generateScenario } from '@/data/scenario/generate'
 import { DEFAULT_UNIT_PROFILE } from '@/data/unitProfile'
@@ -85,18 +87,19 @@ function describeAlert(a: Alert): string {
   const d = a.detection
   const e = a.event
   const where = [e?.host, e?.srcIp && e.srcIp !== e.host ? `← ${e.srcIp}` : undefined, e?.user ? `akun ${e.user}` : undefined].filter(Boolean).join(' ')
-  return `${color(d.level, `[${stamp(d.ts)}] ${LEVEL_LABEL[d.level].toUpperCase().padEnd(6)}`)} ${d.title}${where ? ` · ${where}` : ''}`
+  const attempt = d.signal === 'percobaan' ? ' (percobaan)' : d.signal === 'ambigu' ? ' (perlu konfirmasi)' : ''
+  return `${color(d.level, `[${stamp(d.ts)}] ${LEVEL_LABEL[d.level].toUpperCase().padEnd(6)}`)} ${d.title}${attempt}${where ? ` · ${where}` : ''}`
 }
 
 function describeIncident(u: IncidentUpdate, detectionsById: Map<string, import('@/core/model').Detection>): string[] {
   const i = u.incident
   const tactics = i.tactics.map((t) => TACTIC_LABEL[t] ?? t).join(' → ')
   // Same stages, more evidence: one line is enough.
-  if (!u.isNew && !u.newTactics.length) return [`   ↳ ${i.title}: ${i.detectionIds.length} temuan, skor ${scorePercent(i.score)}%`]
+  if (!u.isNew && !u.newTactics.length) return [`   ↳ ${i.title}: ${i.detectionIds.length} temuan, skor prioritas ${scorePercent(i.score)}%`]
   const head = u.isNew ? '▲ INSIDEN BARU' : `▲ INSIDEN BERKEMBANG (tahap baru: ${u.newTactics.map((t) => TACTIC_LABEL[t] ?? t).join(', ')})`
   const lines = [
     color(i.level, `${head}  ${i.title}`),
-    `   skor ${scorePercent(i.score)}% · ${i.detectionIds.length} temuan · ${stamp(i.firstSeen)} – ${fmtTime(i.lastSeen, false)} WIB`,
+    `   penilaian: ${ASSESSMENT[assessmentOf(i)].label} · skor prioritas ${scorePercent(i.score)}% · ${i.detectionIds.length} temuan · ${stamp(i.firstSeen)} – ${fmtTime(i.lastSeen, false)} WIB`,
     `   tahap: ${tactics}`,
   ]
   const first = priorityActions(i, detectionsById, RULES, 1)[0]
@@ -113,12 +116,19 @@ async function watch(args: Args, once: boolean) {
   if (!(minLevel in LEVEL_RANK)) throw new Error(`Tingkat tidak dikenal: ${minLevel}`)
   const intervalMs = Math.max(0.2, Number(str(args, 'interval', '2'))) * 1000
   const profilePath = args.flags.get('profil')
-  const profile: UnitProfile = typeof profilePath === 'string' ? JSON.parse(await readFile(profilePath, 'utf8')) : DEFAULT_UNIT_PROFILE
+  let profile: UnitProfile = DEFAULT_UNIT_PROFILE
+  if (typeof profilePath === 'string') {
+    const content = await readJson<unknown>(profilePath)
+    if (content === undefined) throw new Error(`Profil tidak dapat dibaca sebagai JSON: ${profilePath}`)
+    const parsed = parseUnitProfile(content)
+    if (!parsed.ok) throw new Error(`Profil tidak valid (${profilePath}):\n- ${parsed.errors.join('\n- ')}`)
+    profile = parsed.profile
+  }
 
   const files = { state: join(dataDir, 'posisi.json'), window: join(dataDir, 'jendela.jsonl'), alerts: join(dataDir, 'peringatan.jsonl'), summary: join(dataDir, 'ringkasan.json') }
   const saved = await readJson<Saved>(files.state)
   const tailer = new Tailer(saved?.tail ?? { files: {} }, !args.flags.has('dari-akhir'))
-  const penjaga = new Penjaga({ pack: RULE_PACK, profile, minLevel })
+  const penjaga = new Penjaga({ pack: loadRulePack(profile), profile, minLevel })
 
   if (saved && existsSync(files.window)) {
     const restored = (await readFile(files.window, 'utf8')).split('\n').filter(Boolean).map((l) => JSON.parse(l) as NormalizedEvent)

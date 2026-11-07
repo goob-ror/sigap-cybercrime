@@ -5,6 +5,7 @@ import { Card, Info } from '@/components/ui/Card'
 import { Label } from '@/components/ui/Label'
 import { PageTitle } from '@/components/ui/PageTitle'
 import type { Detection, FollowUpStatus } from '@/core/model'
+import { decodeEncodedCommand } from '@/core/report/decode'
 import { scorePercent } from '@/core/report/narrative'
 import { toggleStep } from '@/db/cases'
 import type { Investigation } from '@/db/hooks'
@@ -40,6 +41,8 @@ export function DetailView({ detection, data, actor, changeFollowUp, select, ope
   const term = incident?.scoreBreakdown.find((t) => t.kind === 'rule' && t.label === detection.title)
   const followup = c?.followUps[detection.id] ?? 'Baru'
   const steps = rule?.respons ?? []
+  const decoded = decodeEncodedCommand(event?.process?.cmdline)
+  const signalNote = detection.signal === 'percobaan' ? 'Temuan ini menunjukkan ada yang mencoba. Log tidak menunjukkan percobaannya berhasil.' : detection.signal === 'ambigu' ? 'Temuan ini juga muncul saat admin bekerja normal. Konfirmasi dahulu sebelum menyimpulkan serangan.' : null
 
   return <div className="mx-auto max-w-6xl">
     <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end"><PageTitle eyebrow={`Temuan / ${detection.ruleId}`} title={detection.title} text={event?.message ?? ''} /><div className="flex flex-wrap gap-2"><Badge className={levelStyle[detection.level]}>{LEVEL_LABEL[detection.level].toUpperCase()}</Badge><Badge className="border-[#38BDF8]/25 bg-[#38BDF8]/10 text-[#7DD3FC]">{followup.toUpperCase()}</Badge></div></div>
@@ -47,6 +50,8 @@ export function DetailView({ detection, data, actor, changeFollowUp, select, ope
       <div className="space-y-4">
         <Card title="Mengapa Ditandai?" icon={<ShieldAlert size={16} className="text-[#F59E0B]" />}>
           <Info title={rule?.kind === 'native' ? 'Aturan agregasi SIGAP' : 'Aturan Sigma'} text={rule?.description ?? ''} />
+          {signalNote && <p className="mt-3 rounded-lg border border-[#38BDF8]/20 bg-[#38BDF8]/5 p-3 text-xs leading-5 text-[#AEB6C1]">{signalNote}</p>}
+          {decoded && <div className="mt-4"><Label>Perintah yang diuraikan dari Base64</Label><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[#F59E0B]/25 bg-[#0D1016] p-3 font-mono text-[11px] leading-5 text-[#FCD34D]">{decoded}</pre><p className="mt-1 text-[10px] text-[#657080]">Hanya ditampilkan, tidak dijalankan.</p></div>}
           <div className="mt-4"><Label>Bukti yang memenuhi aturan</Label><div className="space-y-2">{Object.entries(detection.matched).map(([field, value], i) => <div key={field} className="flex items-start gap-3 rounded-lg border border-[#272E3A] bg-[#0D1016] p-3 text-xs"><span className="font-mono text-[#38BDF8]">B{i + 1}</span><span className="min-w-0 flex-1 break-words text-[#C3CAD3]"><span className="font-mono text-[#7DD3FC]">{field}</span> = {value}</span><CircleCheck size={15} className="shrink-0 text-[#22C55E]" /></div>)}</div></div>
           {rule?.falsepositives.length ? <div className="mt-4 rounded-lg border border-[#F59E0B]/20 bg-[#F59E0B]/5 p-3"><div className="mb-1 text-[10px] font-semibold text-[#FBBF24]">PERLU DIVERIFIKASI — KEMUNGKINAN POSITIF PALSU</div><ul className="list-disc pl-4 text-xs leading-5 text-[#AEB6C1]">{rule.falsepositives.map((f) => <li key={f}>{f}</li>)}</ul></div> : null}
         </Card>
@@ -65,7 +70,7 @@ export function DetailView({ detection, data, actor, changeFollowUp, select, ope
         </Card>
         <button onClick={() => openLogs(detection.eventIds[0])} className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#38BDF8]/30 bg-[#38BDF8]/10 py-3 text-xs font-semibold text-[#7DD3FC] transition hover:bg-[#38BDF8]/15"><ExternalLink size={14} />Buka di Log Explorer</button>
         <Card title="Insiden & Kasus" icon={<ClipboardList size={16} className="text-[#38BDF8]" />}>
-          {incident && c && <div className="mb-3 rounded-lg border border-[#272E3A] bg-[#0D1016] p-3"><div className="flex items-center justify-between gap-2"><span className="font-mono text-xs text-[#7DD3FC]">{c.id}</span><Badge className={caseStatusStyle[c.status]}>{CASE_STATUS_LABEL[c.status]}</Badge></div><div className="mt-2 text-xs font-medium">{incident.title}</div><div className="mt-1 text-[10px] leading-4 text-[#7E8998]">Skor insiden {scorePercent(incident.score)}% dari {incident.scoreBreakdown.length} unsur{term ? `; temuan ini menyumbang bobot ${term.weight.toFixed(2).replace('.', ',')}` : ''}.</div><button onClick={() => openCase(c.id)} className="mt-3 w-full rounded-md bg-[#38BDF8] py-1.5 text-[11px] font-bold text-[#071018]">Buka kasus</button></div>}
+          {incident && c && <div className="mb-3 rounded-lg border border-[#272E3A] bg-[#0D1016] p-3"><div className="flex items-center justify-between gap-2"><span className="font-mono text-xs text-[#7DD3FC]">{c.id}</span><Badge className={caseStatusStyle[c.status]}>{CASE_STATUS_LABEL[c.status]}</Badge></div><div className="mt-2 text-xs font-medium">{incident.title}</div><div className="mt-1 text-[10px] leading-4 text-[#7E8998]">Skor prioritas insiden {scorePercent(incident.score)}% dari {incident.scoreBreakdown.length} unsur{term ? `; temuan ini menyumbang bobot ${term.weight.toFixed(2).replace('.', ',')}` : ''}.</div><button onClick={() => openCase(c.id)} className="mt-3 w-full rounded-md bg-[#38BDF8] py-1.5 text-[11px] font-bold text-[#071018]">Buka kasus</button></div>}
           <Label>Temuan lain di insiden ini</Label>
           {related.length === 0 ? <p className="text-xs text-[#657080]">Temuan ini berdiri sendiri: tidak ada temuan lain yang berbagi aset, akun, IP, atau domain dalam 24 jam.</p> :
             <div className="space-y-2">{related.map((d) => { const e = eventsById.get(d.eventIds[0]); return <button onClick={() => select(d.id)} key={d.id} className="flex w-full items-center gap-3 rounded-lg border border-[#272E3A] bg-[#0D1016] p-3 text-left hover:border-[#38BDF8]/40">{e && <KindMark kind={e.sourceKind} />}<span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{d.title}</span><span className="mt-1 block font-mono text-[10px] text-[#657080]">{fmtTime(d.ts)} · {LEVEL_LABEL[d.level]}</span></span><ChevronRight size={14} className="text-[#657080]" /></button> })}</div>}

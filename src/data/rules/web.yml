@@ -1,6 +1,9 @@
-# SIGAP rule pack — web servers (Apache/Nginx/cPanel/Plesk access logs) and Linux servers (auth log).
+# SIGAP rule pack — web servers (Apache/Nginx/IIS/cPanel/Plesk access logs) and Linux servers (auth log, auditd).
 # Fields follow the Sigma webserver taxonomy (c-uri is URL-decoded; see src/core/ingest/weblog.ts)
-# and SIGAP's Linux auth fields (src/core/ingest/syslog.ts). Written by Tim Pengen Seblak for SIGAP.
+# and SIGAP's Linux fields (src/core/ingest/syslog.ts, auditd.ts). Written for SIGAP.
+# See windows.yml for `respons` and `sinyal`. An exploit pattern in a URL proves that someone tried, so
+# those rules are `percobaan`; only signs that it worked (a script answering from the uploads folder, a
+# login after guessing) are `kuat`.
 title: Percobaan SQL injection pada aplikasi web
 id: sigap-web-sqli
 status: experimental
@@ -8,6 +11,7 @@ description: URL permintaan memuat pola SQL injection (UNION SELECT, OR 1=1, SLE
 author: SIGAP (Tim Pengen Seblak)
 tags: [attack.initial_access, attack.t1190]
 logsource: { category: webserver }
+sinyal: percobaan
 detection:
   selection:
     c-uri|contains:
@@ -30,9 +34,9 @@ detection:
 falsepositives: [Pemindaian keamanan resmi yang terjadwal]
 level: high
 respons:
-  - Blokir alamat IP sumber di firewall atau WAF
   - Periksa respons berstatus 200 atau berukuran besar ke IP yang sama (indikasi data berhasil dibaca)
-  - Perbaiki kueri aplikasi (parameterized query) dan ganti kata sandi basis data
+  - Blokir alamat IP sumber di firewall atau WAF
+  - Perbaiki kueri aplikasi (parameterized query) dan ganti kata sandi basis data bila ada tanda berhasil
 ---
 title: Percobaan cross-site scripting (XSS)
 id: sigap-web-xss
@@ -41,6 +45,7 @@ description: URL permintaan memuat skrip atau handler JavaScript. Penyerang menc
 author: SIGAP (Tim Pengen Seblak)
 tags: [attack.initial_access, attack.t1190]
 logsource: { category: webserver }
+sinyal: percobaan
 detection:
   selection:
     c-uri|contains: ['<script', 'javascript:', 'onerror=', 'onload=', 'document.cookie', '<svg', '<iframe', 'alert(']
@@ -58,15 +63,16 @@ description: URL permintaan berusaha keluar dari folder situs (../) atau membaca
 author: SIGAP (Tim Pengen Seblak)
 tags: [attack.initial_access, attack.t1190, attack.discovery, attack.t1083]
 logsource: { category: webserver }
+sinyal: percobaan
 detection:
   selection:
     c-uri|contains: ['../', '..\', '/etc/passwd', '/etc/shadow', 'php://', 'file://', 'win.ini', 'boot.ini', '/proc/self/environ']
   condition: selection
-falsepositives: [Hampir tidak ada]
+falsepositives: [Pemindaian keamanan resmi yang terjadwal]
 level: high
 respons:
+  - Periksa apakah permintaan berstatus 200 (berkas mungkin terbaca); bila ya, ganti kredensial yang tersimpan di server
   - Blokir alamat IP sumber
-  - Periksa apakah permintaan berstatus 200 (berkas mungkin terbaca) dan ganti kredensial yang tersimpan di server
 ---
 title: Injeksi perintah atau eksekusi kode jarak jauh lewat web
 id: sigap-web-rce
@@ -75,15 +81,16 @@ description: URL permintaan memuat perintah sistem (wget/curl, shell, chmod) ata
 author: SIGAP (Tim Pengen Seblak)
 tags: [attack.initial_access, attack.t1190, attack.execution, attack.t1059.004]
 logsource: { category: webserver }
+sinyal: percobaan
 detection:
   selection:
     c-uri|contains: [';wget ', ';curl ', '|wget ', '|curl ', 'wget http', 'curl http', '|sh', '|bash', '/bin/sh', '/bin/bash', 'chmod +x', 'nc -e', '${jndi:', 'cmd.exe', 'powershell']
   condition: selection
-falsepositives: [Hampir tidak ada]
+falsepositives: [Halaman situs yang membahas perintah tersebut, misalnya artikel tentang PowerShell]
 level: high
 respons:
-  - Isolasi server web dari jaringan internal, jangan dimatikan
-  - Periksa proses dan berkas baru di /tmp atau folder unggahan
+  - Periksa proses dan berkas baru di /tmp atau folder unggahan untuk melihat apakah perintah berjalan
+  - Bila ada tanda berhasil, isolasi server web dari jaringan internal, jangan dimatikan
   - Blokir alamat IP sumber dan alamat unduhan yang disebut di URL
 ---
 title: Pemindai kerentanan otomatis mengakses situs
@@ -93,6 +100,7 @@ description: User-agent permintaan berasal dari alat pemindai (sqlmap, Nikto, Nm
 author: SIGAP (Tim Pengen Seblak)
 tags: [attack.reconnaissance, attack.t1595.002]
 logsource: { category: webserver }
+sinyal: percobaan
 detection:
   selection:
     cs-user-agent|contains: ['sqlmap', 'nikto', 'nmap', 'masscan', 'zgrab', 'gobuster', 'dirbuster', 'wpscan', 'nuclei', 'acunetix', 'nessus', 'openvas', 'ffuf', 'feroxbuster', 'whatweb', 'hydra']
@@ -106,43 +114,150 @@ respons:
 title: Pencarian berkas sensitif di situs
 id: sigap-web-sensitive-files
 status: experimental
-description: Permintaan ke berkas yang tidak boleh terbuka ke publik (.env, .git, cadangan basis data, phpinfo). Penyerang mencari kata sandi, kunci API, atau kode sumber.
+description: Permintaan ke berkas yang tidak boleh terbuka ke publik (.env, .git, cadangan basis data, phpinfo), tetapi server tidak memberikannya. Penyerang mencari kata sandi, kunci API, atau kode sumber.
 author: SIGAP (Tim Pengen Seblak)
 tags: [attack.reconnaissance, attack.t1595.003]
 logsource: { category: webserver }
+sinyal: percobaan
 detection:
   selection:
     cs-uri-stem|endswith: ['/.env', '/.git/config', '/.git/HEAD', '/.htpasswd', '/.aws/credentials', '/wp-config.php.bak', '/config.php.bak', '/phpinfo.php', '/server-status', '/backup.zip', '/backup.sql', '/db.sql', '/.DS_Store', '/web.config']
-  condition: selection
+  status_ok:
+    sc-status|gte: 200
+    sc-status|lt: 300
+  condition: selection and not status_ok
 falsepositives: [Pemeriksaan konfigurasi oleh admin situs]
 level: medium
 respons:
-  - Pastikan berkas tersebut tidak dapat diakses publik (status harus 403/404)
-  - Bila ada yang berstatus 200, anggap rahasianya bocor dan ganti segera
+  - Pastikan berkas tersebut tetap tidak dapat diakses publik (status 403/404)
+  - Blokir alamat IP sumber bila berulang
 ---
-title: Akses web shell di server web
+title: Berkas sensitif situs terbuka ke publik
+id: sigap-web-sensitive-exposed
+status: experimental
+description: Server menjawab 200 untuk berkas yang tidak boleh terbuka ke publik (.env, .git, cadangan basis data, phpinfo). Bila berkasnya benar ada, isinya kini berada di tangan peminta.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.reconnaissance, attack.t1595.003]
+logsource: { category: webserver }
+sinyal: ambigu
+detection:
+  selection:
+    cs-uri-stem|endswith: ['/.env', '/.git/config', '/.git/HEAD', '/.htpasswd', '/.aws/credentials', '/wp-config.php.bak', '/config.php.bak', '/phpinfo.php', '/server-status', '/backup.zip', '/backup.sql', '/db.sql', '/.DS_Store', '/web.config']
+  status_ok:
+    sc-status|gte: 200
+    sc-status|lt: 300
+  condition: selection and status_ok
+falsepositives: [Situs yang menjawab 200 untuk semua alamat, termasuk yang tidak ada]
+level: high
+respons:
+  - Buka alamat itu sendiri; bila berkasnya memang tampil, anggap rahasianya bocor dan ganti segera
+  - Tutup akses berkas tersebut lewat konfigurasi server
+---
+title: Web shell dipakai di server web
 id: sigap-web-webshell
 status: experimental
-description: Skrip server (PHP/JSP/ASPX) dipanggil dari folder unggahan atau bernama seperti web shell yang dikenal. Ini tanda server sudah disusupi dan penyerang punya kendali jarak jauh.
+description: Skrip server (PHP/JSP/ASPX) di folder unggahan atau bernama seperti web shell yang dikenal menjawab 200 atas POST atau permintaan berparameter. Ini tanda server sudah disusupi dan penyerang punya kendali jarak jauh.
 author: SIGAP (Tim Pengen Seblak)
 tags: [attack.persistence, attack.t1505.003]
 logsource: { category: webserver }
+sinyal: kuat
 detection:
   selection_upload_dir:
     cs-uri-stem|contains: ['/uploads/', '/upload/', '/files/', '/images/', '/img/', '/tmp/', '/media/']
-  selection_script:
-    cs-uri-stem|endswith: ['.php', '.phtml', '.php5', '.phar', '.jsp', '.jspx', '.aspx', '.asp']
   selection_known:
     cs-uri-stem|contains: ['c99', 'r57', 'wso.php', 'b374k', 'shell.php', 'cmd.php', 'webshell']
-  filter_missing:
-    sc-status: 404
-  condition: ((selection_upload_dir and selection_script) or selection_known) and not filter_missing
+  selection_script:
+    cs-uri-stem|endswith: ['.php', '.phtml', '.php5', '.phar', '.jsp', '.jspx', '.aspx', '.asp']
+  status_ok:
+    sc-status|gte: 200
+    sc-status|lt: 300
+  used_post:
+    cs-method: POST
+  used_query:
+    cs-uri-query|contains: '='
+  condition: (selection_upload_dir or selection_known) and selection_script and status_ok and (used_post or used_query)
 falsepositives: [Aplikasi lama yang menyimpan skrip di folder unggahan (perlu dibenahi)]
 level: critical
 respons:
   - Isolasi server web dari jaringan internal, jangan dimatikan
   - Amankan berkas skrip tersebut sebagai barang bukti (hitung hash) lalu hapus dari server
   - Periksa log unggahan sebelumnya dan semua IP yang memanggil berkas itu
+---
+title: Skrip menjawab dari folder unggahan
+id: sigap-web-script-in-upload
+status: experimental
+description: Skrip server (PHP/JSP/ASPX) di folder unggahan atau bernama seperti web shell menjawab 200, tanpa parameter. Bisa berarti web shell yang baru ditanam, atau situs yang menjawab 200 untuk semua alamat.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.persistence, attack.t1505.003]
+logsource: { category: webserver }
+sinyal: ambigu
+detection:
+  selection_upload_dir:
+    cs-uri-stem|contains: ['/uploads/', '/upload/', '/files/', '/images/', '/img/', '/tmp/', '/media/']
+  selection_known:
+    cs-uri-stem|contains: ['c99', 'r57', 'wso.php', 'b374k', 'shell.php', 'cmd.php', 'webshell']
+  selection_script:
+    cs-uri-stem|endswith: ['.php', '.phtml', '.php5', '.phar', '.jsp', '.jspx', '.aspx', '.asp']
+  status_ok:
+    sc-status|gte: 200
+    sc-status|lt: 300
+  used_post:
+    cs-method: POST
+  used_query:
+    cs-uri-query|contains: '='
+  condition: (selection_upload_dir or selection_known) and selection_script and status_ok and not used_post and not used_query
+falsepositives: [Situs yang menjawab 200 untuk semua alamat, Aplikasi lama yang menyimpan skrip di folder unggahan]
+level: high
+respons:
+  - Periksa di server apakah berkas itu benar ada dan siapa yang mengunggahnya
+  - Bila berkas tidak dikenal, amankan sebagai barang bukti lalu hapus
+---
+title: Pencarian web shell ditolak server
+id: sigap-web-webshell-probe
+status: experimental
+description: Ada yang memanggil alamat seperti web shell, dan server menolaknya (selain 404). Pemindai di internet mencoba ini terus-menerus; ini bukan tanda server sudah disusupi.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.reconnaissance, attack.t1595.003]
+logsource: { category: webserver }
+sinyal: percobaan
+detection:
+  selection_upload_dir:
+    cs-uri-stem|contains: ['/uploads/', '/upload/', '/files/', '/images/', '/img/', '/tmp/', '/media/']
+  selection_known:
+    cs-uri-stem|contains: ['c99', 'r57', 'wso.php', 'b374k', 'shell.php', 'cmd.php', 'webshell']
+  selection_script:
+    cs-uri-stem|endswith: ['.php', '.phtml', '.php5', '.phar', '.jsp', '.jspx', '.aspx', '.asp']
+  status_ok:
+    sc-status|gte: 200
+    sc-status|lt: 300
+  filter_missing:
+    sc-status: 404
+  condition: (selection_upload_dir or selection_known) and selection_script and not status_ok and not filter_missing
+falsepositives: [Pemindaian keamanan resmi yang terjadwal]
+level: low
+respons:
+  - Tidak perlu tindakan segera; blokir alamat sumber bila berulang
+---
+title: Halaman judi online di situs satuan
+id: sigap-web-gambling-seo
+status: experimental
+description: Situs menjawab 200 untuk alamat berisi kata kunci judi online. Situs yang disusupi sering disisipi halaman seperti ini secara diam-diam, untuk menumpang reputasi domainnya di mesin pencari.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.impact, attack.t1491.002]
+logsource: { category: webserver }
+sinyal: ambigu
+detection:
+  selection:
+    c-uri|contains: ['slot-gacor', 'slot gacor', 'slotgacor', 'judi-online', 'judi online', 'togel', 'maxwin', 'scatter-hitam', 'rtp-slot', 'situs-slot']
+  status_ok:
+    sc-status|gte: 200
+    sc-status|lt: 300
+  condition: selection and status_ok
+falsepositives: [Situs yang menjawab 200 untuk semua alamat, Fitur pencarian situs yang menerima kata kunci itu]
+level: high
+respons:
+  - Buka alamat itu sendiri dan periksa isinya; cari juga nama domain satuan di mesin pencari dengan kata kunci tersebut
+  - Bila halaman benar ada, anggap situs disusupi; amankan berkas yang berubah sebagai barang bukti
 ---
 title: Akun lokal baru dibuat di server Linux
 id: sigap-linux-useradd
@@ -151,6 +266,7 @@ description: Akun pengguna baru ditambahkan (useradd). Penyerang membuat akun ca
 author: SIGAP (Tim Pengen Seblak)
 tags: [attack.persistence, attack.t1136.001]
 logsource: { product: linux, service: auth }
+sinyal: ambigu
 detection:
   selection:
     program: useradd
@@ -168,6 +284,7 @@ description: Akun dimasukkan ke grup berhak akses root (sudo, wheel, admin). Pen
 author: SIGAP (Tim Pengen Seblak)
 tags: [attack.persistence, attack.t1098]
 logsource: { product: linux, service: auth }
+sinyal: ambigu
 detection:
   selection:
     program: [usermod, gpasswd]
@@ -186,6 +303,7 @@ description: Pengguna menjalankan shell (bash/sh) atau su sebagai root melalui s
 author: SIGAP (Tim Pengen Seblak)
 tags: [attack.privilege_escalation, attack.t1548.003, attack.execution, attack.t1059.004]
 logsource: { product: linux, service: auth }
+sinyal: ambigu
 detection:
   selection:
     program: sudo
@@ -196,3 +314,75 @@ level: medium
 respons:
   - Konfirmasi ke pemilik akun apakah ia sedang bekerja di server
   - Bila tidak, kunci akun tersebut dan periksa perintah-perintah berikutnya
+---
+title: Skrip diunduh dari internet di server Linux
+id: sigap-linux-download-script
+status: experimental
+description: curl atau wget mengambil berkas skrip atau program. Lazim dipakai penyerang untuk membawa alatnya setelah masuk. Terlihat lewat auditd, atau bila dijalankan dengan sudo.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.command_and_control, attack.t1105]
+logsource: { product: linux }
+sinyal: ambigu
+detection:
+  selection:
+    command|re|i: '(^|/)(curl|wget)\s+.*\.(sh|py|pl|elf|bin|run)(\s|$)'
+  condition: selection
+falsepositives: [Admin memasang perangkat lunak dari sumber resmi]
+level: medium
+respons:
+  - Catat alamat unduhan, lalu periksa berkas yang diambil sebagai barang bukti
+  - Konfirmasi ke pemilik akun apakah ia yang menjalankannya
+---
+title: Data dikemas menjadi arsip di server Linux
+id: sigap-linux-archive-data
+status: experimental
+description: tar, zip, atau sejenisnya mengemas folder data. Penyerang mengemas data sebelum membawanya keluar; skrip cadangan melakukan hal yang sama. Terlihat lewat auditd, atau bila dijalankan dengan sudo.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.collection, attack.t1560.001]
+logsource: { product: linux }
+sinyal: ambigu
+detection:
+  selection:
+    command|re|i: '(^|/)(tar|zip|7z|rar)\s+.*(/home|/srv|/etc|/var/www|/root|/mnt|/data)'
+  condition: selection
+falsepositives: [Skrip cadangan terjadwal]
+level: low
+respons:
+  - Konfirmasi ke admin TI apakah ini pekerjaan cadangan
+  - Bila tidak, periksa ke mana arsip itu dikirim
+---
+title: Berkas dikirim keluar dari server Linux
+id: sigap-linux-transfer-out
+status: experimental
+description: scp, rsync, nc, atau unggahan curl mengirim berkas ke alamat IP. Terlihat lewat auditd, atau bila dijalankan dengan sudo.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.exfiltration, attack.t1048]
+logsource: { product: linux }
+sinyal: ambigu
+detection:
+  selection:
+    command|re|i: '(^|/)(scp|sftp|rsync)\s+.*(@|\s)\d{1,3}(\.\d{1,3}){3}|(^|/)curl\s+.*(-T|--upload-file|-F|--form|--data-binary)\s|(^|/)(nc|ncat|socat)\s+.*\d{1,3}(\.\d{1,3}){3}'
+  condition: selection
+falsepositives: [Pencadangan ke server resmi]
+level: medium
+respons:
+  - Periksa alamat tujuan dan berkas yang dikirim
+  - Bila tujuan tidak dikenal, blokir alamatnya dan anggap data tersebut bocor
+---
+title: Jejak dihapus di server Linux
+id: sigap-linux-log-tamper
+status: experimental
+description: Riwayat perintah atau log sistem dihapus (.bash_history, /var/log). Penyerang menghapus jejak sebelum pergi. Terlihat lewat auditd, atau bila dijalankan dengan sudo.
+author: SIGAP (Tim Pengen Seblak)
+tags: [attack.defense_evasion, attack.t1070.002, attack.t1070.003]
+logsource: { product: linux }
+sinyal: kuat
+detection:
+  selection:
+    command|re|i: '(^|/)(rm|shred|truncate|unlink)\s+.*(\.bash_history|/var/log/(auth|secure|syslog|messages|wtmp|btmp|lastlog))|(^|/)ln\s+-sf?\s+/dev/null\s+.*\.bash_history|history\s+-c|unset\s+HISTFILE'
+  condition: selection
+falsepositives: [Rotasi log oleh admin (seharusnya lewat logrotate, bukan rm)]
+level: high
+respons:
+  - Anggap server telah disusupi dan kumpulkan log dari sumber lain sebelum ikut terhapus
+  - Kunci akun yang menjalankan perintah itu

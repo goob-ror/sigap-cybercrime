@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Artifact, Case, CustodyEntry, Detection, Incident, NormalizedEvent } from '@/core/model'
 import { sha256Hex } from '@/core/evidence/hash'
+import { appendCustody } from '@/core/evidence/custody'
 import { buildCustodyChain, buildEvidenceFiles, renderManifest, verifyEvidencePackage, type EvidenceInput } from '@/core/evidence/package'
+import { createSigningKey, keyFingerprint, signPackage, SIGNATURE_FILE } from '@/core/evidence/signing'
+import { DEFAULT_UNIT_PROFILE } from '@/data/unitProfile'
 
 const T0 = Date.UTC(2026, 10, 2, 2, 0, 0)
 const enc = (s: string) => new TextEncoder().encode(s)
@@ -16,7 +19,7 @@ function makeInput(): EvidenceInput {
   }
   const c: Case = { id: 'KSS-0001', title: 'Insiden uji', status: 'Open', assignee: '', notes: 'catatan', createdAt: T0, updatedAt: T0, incidentIds: ['inc1'], playbookProgress: {}, followUps: {}, history: [] }
   const source: Artifact = { id: 'imp1', filename: 'log.json', sha256: 'aa'.repeat(32), size: 100, mime: 'application/json', kind: 'log', addedAt: T0, addedBy: 'operator', analysis: { eventCount: 1 } }
-  return { case: c, incident, detections: [det], events: [event], sources: [source], actor: 'operator', generatedAt: T0 }
+  return { case: c, incident, detections: [det], events: [event], sources: [source], actor: 'operator', profile: DEFAULT_UNIT_PROFILE, generatedAt: T0 }
 }
 
 async function buildPackage(input: EvidenceInput): Promise<{ name: string; bytes: Uint8Array }[]> {
@@ -37,6 +40,96 @@ describe('evidence package', () => {
     expect(r.manifestBound).toBe(true)
     expect(r.chain.ok).toBe(true)
     expect(r.files.every((f) => f.ok)).toBe(true)
+  })
+
+  it('keeps the network map out unless asked, but always records which profile was used', async () => {
+    const profile = { ...DEFAULT_UNIT_PROFILE, name: 'Satuan Uji' }
+    const without = await buildPackage({ ...makeInput(), profile })
+    const read = (files: { name: string; bytes: Uint8Array }[], name: string) => new TextDecoder().decode(files.find((f) => f.name === name)!.bytes)
+    expect(without.find((f) => f.name === 'profil-satuan.json')).toBeUndefined()
+    expect(read(without, 'laporan.html')).toContain('SATUAN: Satuan Uji')
+    const details = (JSON.parse(read(without, 'rantai-bukti.json')) as CustodyEntry[]).map((e) => e.detail)
+    expect(details.join('\n')).toContain(`profil "Satuan Uji" (SHA-256 ${await sha256Hex(JSON.stringify(profile))})`)
+    expect((await verifyEvidencePackage(without)).ok).toBe(true)
+
+    const withMap = await buildPackage({ ...makeInput(), profile, includeProfile: true })
+    expect(JSON.parse(read(withMap, 'profil-satuan.json'))).toEqual(profile)
+    expect((await verifyEvidencePackage(withMap)).ok).toBe(true)
+  })
+
+  it('continues the running custody log instead of rebuilding it', async () => {
+    let log: CustodyEntry[] = []
+    log = await appendCustody(log, { ts: T0 - 5000, actor: 'operator', action: 'imported', artifactId: 'imp1', artifactSha256: 'aa'.repeat(32), detail: 'Impor log.json' })
+    log = await appendCustody(log, { ts: T0 - 1000, actor: 'operator', action: 'note', detail: 'Profil jaringan diganti' })
+    const files = await buildPackage({ ...makeInput(), custodyLog: log })
+    const chain = JSON.parse(new TextDecoder().decode(files.find((f) => f.name === 'rantai-bukti.json')!.bytes)) as CustodyEntry[]
+    expect(chain.slice(0, 2)).toEqual(log)
+    expect(chain.map((e) => e.action)).toEqual(['imported', 'note', 'analyzed', 'exported'])
+    expect((await verifyEvidencePackage(files)).ok).toBe(true)
+  })
+
+  it('reports files added to the ZIP that the manifest does not list', async () => {
+    const files = await buildPackage(makeInput())
+    files.push({ name: 'selipan.exe', bytes: enc('MZ') })
+    const r = await verifyEvidencePackage(files)
+    expect(r.ok).toBe(false)
+    expect(r.unlisted).toEqual(['selipan.exe'])
+  })
+
+  describe('signature', () => {
+    async function signed(input: EvidenceInput, keys: CryptoKeyPair) {
+      const files = await buildPackage(input)
+      const read = (name: string) => new TextDecoder().decode(files.find((f) => f.name === name)!.bytes)
+      const signature = await signPackage(keys, read('MANIFEST-SHA256.txt'), read('rantai-bukti.json'), new Date(T0).toISOString())
+      return [...files, { name: SIGNATURE_FILE, bytes: enc(JSON.stringify(signature)) }]
+    }
+
+    it('accepts a signed package and reports the key that signed it', async () => {
+      const keys = await createSigningKey()
+      const r = await verifyEvidencePackage(await signed(makeInput(), keys))
+      expect(r.ok).toBe(true)
+      expect(r.signature).toEqual({ status: 'sah', fingerprint: await keyFingerprint(keys), signedAt: new Date(T0).toISOString() })
+    })
+
+    it('says plainly when a package is unsigned', async () => {
+      const r = await verifyEvidencePackage(await buildPackage(makeInput()))
+      expect(r.signature.status).toBe('tidak-ada')
+    })
+
+    it('fails when anything is edited after signing, even with the manifest and chain rebuilt', async () => {
+      const keys = await createSigningKey()
+      const original = await signed(makeInput(), keys)
+      const signature = original.find((f) => f.name === SIGNATURE_FILE)!
+      // The forger rebuilds everything that hashing protects, but cannot sign without the key.
+      const forged = await buildPackage({ ...makeInput(), actor: 'orang lain', events: [] })
+      const r = await verifyEvidencePackage([...forged, signature])
+      expect(r.ok).toBe(false)
+      expect(r.signature.status).toBe('tidak-sah')
+    })
+
+    it('shows a different fingerprint when a forger signs with their own key', async () => {
+      const keys = await createSigningKey()
+      const forger = await createSigningKey()
+      const r = await verifyEvidencePackage(await signed({ ...makeInput(), actor: 'orang lain', events: [] }, forger))
+      // It verifies, so the fingerprint is what the recipient has to compare.
+      expect(r.signature.status).toBe('sah')
+      if (r.signature.status === 'sah') {
+        expect(r.signature.fingerprint).toBe(await keyFingerprint(forger))
+        expect(r.signature.fingerprint).not.toBe(await keyFingerprint(keys))
+      }
+    })
+
+    it('ignores a fingerprint written into the file and computes its own', async () => {
+      const keys = await createSigningKey()
+      const forger = await createSigningKey()
+      const files = await signed(makeInput(), forger)
+      const i = files.findIndex((f) => f.name === SIGNATURE_FILE)
+      const sig = JSON.parse(new TextDecoder().decode(files[i].bytes))
+      sig.sidikJari = await keyFingerprint(keys)
+      files[i] = { name: SIGNATURE_FILE, bytes: enc(JSON.stringify(sig)) }
+      const r = await verifyEvidencePackage(files)
+      expect(r.signature).toMatchObject({ status: 'sah', fingerprint: await keyFingerprint(forger) })
+    })
   })
 
   it('detects a tampered content file', async () => {

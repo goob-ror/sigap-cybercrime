@@ -1,4 +1,5 @@
 import type { FieldValue } from '@/core/model'
+import { isEvtx, parseEvtx } from '@/core/ingest/evtx'
 
 /** Last path segment of a Windows or POSIX path: `C:\Windows\cmd.exe` -> `cmd.exe`. */
 export function basename(path: string | undefined): string | undefined {
@@ -82,10 +83,18 @@ export async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
-/** A log file's text and logical name: gzip is unpacked and `.gz` dropped from the name. */
-export async function readLogFile(bytes: Uint8Array, name: string): Promise<{ text: string; name: string }> {
-  if (!isGzip(bytes)) return { text: decodeText(bytes), name }
-  return { text: decodeText(await gunzip(bytes)), name: name.replace(/\.gz$/i, '') }
+/**
+ * A log file's text and logical name: gzip is unpacked and `.gz` dropped from the name; a binary
+ * `.evtx` becomes the same JSON the collector writes. `damaged` counts records that could not be read.
+ */
+export async function readLogFile(bytes: Uint8Array, name: string): Promise<{ text: string; name: string; damaged?: number }> {
+  const unpacked = isGzip(bytes) ? await gunzip(bytes) : bytes
+  const logical = isGzip(bytes) ? name.replace(/\.gz$/i, '') : name
+  if (isEvtx(unpacked)) {
+    const { records, errors } = parseEvtx(unpacked)
+    return { text: JSON.stringify(records), name: logical, damaged: errors }
+  }
+  return { text: decodeText(unpacked), name: logical }
 }
 
 /** Splits text into non-empty lines, keeping 1-based line numbers. */

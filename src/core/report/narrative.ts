@@ -1,4 +1,4 @@
-import type { Detection, Incident, Level, NormalizedEvent } from '@/core/model'
+import type { Assessment, Detection, Incident, Level, NormalizedEvent } from '@/core/model'
 import type { RuleMeta } from '@/core/detect/sigma'
 import { LEVEL_RANK } from '@/core/labels'
 import { TACTIC_LABEL, tacticOf } from '@/data/attack'
@@ -97,9 +97,27 @@ export function priorityActions(incident: Incident, detectionsById: Map<string, 
 }
 
 export function scorePercent(score: number): number {
-  // Floor, so a score is never rounded up to a certainty it does not have.
+  // Floor, so a score is never rounded up to more than it is.
   return Math.floor(score * 100)
 }
+
+/** What the evidence supports, and what the operator should do about it. */
+export const ASSESSMENT: Record<Assessment, { label: string; text: string }> = {
+  'indikasi-kuat': {
+    label: 'Indikasi kuat',
+    text: 'Ada temuan yang jarang muncul pada pekerjaan normal. Tangani sebagai insiden sampai terbukti sebaliknya, lalu laporkan sesuai prosedur satuan.',
+  },
+  'perlu-konfirmasi': {
+    label: 'Perlu konfirmasi',
+    text: 'Semua temuan ini juga muncul saat admin bekerja normal. Tanyakan dahulu kepada admin TI apakah pekerjaan ini terjadwal, sebelum mengisolasi host atau melaporkannya sebagai serangan.',
+  },
+  'hanya-percobaan': {
+    label: 'Hanya percobaan',
+    text: 'Ada yang mencoba, tetapi log tidak menunjukkan keberhasilan. Server yang terbuka ke internet menerima lalu lintas seperti ini setiap hari. Periksa permintaan berstatus 200 dan login yang berhasil dari alamat yang sama sebelum menyimpulkan.',
+  },
+}
+
+export const assessmentOf = (incident: Pick<Incident, 'assessment'>): Assessment => incident.assessment ?? 'perlu-konfirmasi'
 
 /** Hosts and OT devices the incident touched. A common server counts only where activity happened on it. */
 export function affectedAssets(incident: Incident) {
@@ -127,6 +145,7 @@ export function incidentSummary(incident: Incident, steps: StoryStep[]): string 
   if (path.length >= 2) parts.push(`Rangkaian dimulai di ${path[0]}, berlanjut ke ${path.slice(1, -1).length ? `${path.slice(1, -1).join(', ')}, hingga ` : ''}${path.at(-1)}.`)
   else if (path.length === 1) parts.push(`Aktivitas terpusat di ${path[0]}.`)
   if (steps.length) parts.push(`Tahap yang teramati: ${[...new Set(steps.map((s) => s.label))].join(', ')}.`)
-  parts.push(`Tingkat keyakinan ${scorePercent(incident.score)}% dihitung dari ${incident.scoreBreakdown.length} unsur bukti. Keterkaitan antar-temuan disimpulkan dari entitas yang sama; sebab-akibatnya tetap perlu diverifikasi.`)
+  parts.push(`Penilaian: ${ASSESSMENT[assessmentOf(incident)].label}. ${ASSESSMENT[assessmentOf(incident)].text}`)
+  parts.push(`Skor prioritas ${scorePercent(incident.score)}% dihitung dari ${incident.scoreBreakdown.length} unsur untuk mengurutkan penanganan; angka ini bukan peluang bahwa serangan benar-benar terjadi. Keterkaitan antar-temuan disimpulkan dari entitas yang sama; sebab-akibatnya tetap perlu diverifikasi.`)
   return parts.join(' ')
 }

@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "build:agent": "vite build --config vite.agent.config.ts",
+    "build:kit": "npm run build && npm run build:agent && node scripts/build-kit.mjs",
     "pos-jaga": "node dist-agent/pos-jaga.mjs",
+    "serve": "node --env-file-if-exists=.env server/sigap-server.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "oxfmt"
