@@ -74,7 +74,7 @@ export function decodeUri(text: string, plusIsSpace = false): string {
 }
 
 // Tokens that name the log, not the machine: dropped when deriving a host from a file name.
-const NOISE = new Set(['access', 'error', 'ssl', 'ssl_log', 'log', 'logs', 'nginx', 'apache', 'apache2', 'httpd', 'litespeed', 'lsws', 'auth', 'secure', 'syslog', 'messages', 'domlogs', 'other', 'vhosts', 'bytes'])
+const NOISE = new Set(['access', 'error', 'ssl', 'ssl_log', 'log', 'logs', 'nginx', 'apache', 'apache2', 'httpd', 'litespeed', 'lsws', 'auth', 'secure', 'syslog', 'messages', 'domlogs', 'other', 'vhosts', 'bytes', 'audit'])
 const MONTH_TOKEN = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/i
 const DOMAIN_RE = /([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,24})(?=$|[-_])/i
 
@@ -98,6 +98,47 @@ export function hostFromFilename(filename: string): string | undefined {
   return parts.length ? parts.join('-').toUpperCase() : undefined
 }
 
+/** One web request, however the server logged it. `target` is the raw path and query. */
+export type WebRequest = { ts: number; client: string; method: string; target: string; protocol?: string; status?: number; bytes?: number; referer?: string; agent?: string; username?: string; vhost?: string }
+
+/** A request as an event, with the Sigma webserver fields the rules read. */
+export function webEvent(r: WebRequest, id: string, importId: string, host: string | undefined): NormalizedEvent {
+  const q = r.target.indexOf('?')
+  const stem = decodeUri(q >= 0 ? r.target.slice(0, q) : r.target)
+  const query = q >= 0 ? decodeUri(r.target.slice(q + 1), true) : ''
+  const uri = query ? `${stem}?${query}` : stem
+  const fields: Record<string, FieldValue> = {
+    'c-ip': r.client,
+    'cs-method': r.method,
+    'c-uri': uri,
+    'cs-uri-stem': stem,
+    'cs-uri-query': query || null,
+    'c-uri-raw': r.target,
+    'sc-status': r.status ?? null,
+    'sc-bytes': r.bytes ?? null,
+    'cs-referer': r.referer ?? null,
+    'cs-user-agent': r.agent ?? null,
+    'cs-username': r.username ?? null,
+    'cs-version': r.protocol ?? null,
+    'cs-host': r.vhost ?? null,
+  }
+  return {
+    id,
+    ts: r.ts,
+    dataset: 'web.access',
+    sourceKind: 'server',
+    logsource: { category: 'webserver' },
+    host,
+    user: normalizeUser(r.username),
+    srcIp: cleanIp(r.client),
+    url: uri,
+    // The site's own name is not an indicator, so `domain` stays empty (it would land on a blocklist).
+    message: `${r.method} ${truncate(uri, 140)} → ${r.status ?? '-'}`,
+    importId,
+    fields,
+  }
+}
+
 export function normalizeAccess(a: AccessLine, id: string, importId: string, host: string | undefined): NormalizedEvent | null {
   const ts = clfTime(a.time)
   if (ts === undefined) return null
@@ -106,38 +147,61 @@ export function normalizeAccess(a: AccessLine, id: string, importId: string, hos
   const method = hasMethod ? parts[0] : '-'
   const protocol = hasMethod && /^HTTP\//.test(parts.at(-1)!) && parts.length >= 3 ? parts.at(-1)! : undefined
   const target = hasMethod ? parts.slice(1, protocol ? -1 : undefined).join(' ') : a.request
-  const q = target.indexOf('?')
-  const stem = decodeUri(q >= 0 ? target.slice(0, q) : target)
-  const query = q >= 0 ? decodeUri(target.slice(q + 1), true) : ''
-  const uri = query ? `${stem}?${query}` : stem
-  const fields: Record<string, FieldValue> = {
-    'c-ip': a.client,
-    'cs-method': method,
-    'c-uri': uri,
-    'cs-uri-stem': stem,
-    'cs-uri-query': query || null,
-    'c-uri-raw': target,
-    'sc-status': a.status ?? null,
-    'sc-bytes': a.bytes ?? null,
-    'cs-referer': a.referer ?? null,
-    'cs-user-agent': a.agent ?? null,
-    'cs-username': dash(a.user) ?? null,
-    'cs-version': protocol ?? null,
-    'cs-host': a.vhost ?? null,
+  return webEvent({ ts, client: a.client, method, target, protocol, status: a.status, bytes: a.bytes, referer: a.referer, agent: a.agent, username: dash(a.user), vhost: a.vhost }, id, importId, host)
+}
+
+/** First lines of an IIS W3C log. */
+export function isIisHeader(head: string): boolean {
+  return /^#Software: Microsoft Internet Information/m.test(head) || /^#Fields:\s*date\s+time\b/m.test(head)
+}
+
+/**
+ * IIS W3C logs: space-separated, columns named by a `#Fields:` line, times in UTC, spaces in the
+ * user-agent written as `+`. A file can restart its header after an IIS restart.
+ */
+export function parseIisLog(text: string, filename: string, importId: string): { events: NormalizedEvent[]; errors: { line: number; message: string }[] } {
+  const events: NormalizedEvent[] = []
+  const errors: { line: number; message: string }[] = []
+  let columns: string[] = []
+  // `u_ex261103.log` names a day, not a machine.
+  const fromFile = /^u_?ex\d+/i.test(filename.split(/[\\/]/).pop() ?? '') ? undefined : hostFromFilename(filename)
+  let lineNo = 0
+  for (const line of text.split(/\r?\n/)) {
+    lineNo++
+    if (!line.trim()) continue
+    if (line.startsWith('#')) {
+      const m = /^#Fields:\s*(.*)$/.exec(line)
+      if (m) columns = m[1].trim().split(/\s+/)
+      continue
+    }
+    const values = line.trim().split(/\s+/)
+    const get = (name: string) => {
+      const i = columns.indexOf(name)
+      return i >= 0 ? dash(values[i]) : undefined
+    }
+    const date = get('date')
+    const time = get('time')
+    const ts = date && time ? Date.parse(`${date}T${time}Z`) : NaN
+    const client = get('c-ip')
+    if (!columns.length || Number.isNaN(ts) || !client) {
+      errors.push({ line: lineNo, message: 'Bukan baris log IIS' })
+      continue
+    }
+    const stem = get('cs-uri-stem') ?? '/'
+    const query = get('cs-uri-query')
+    events.push(webEvent({
+      ts,
+      client,
+      method: get('cs-method') ?? '-',
+      target: query ? `${stem}?${query}` : stem,
+      protocol: get('cs-version'),
+      status: toNumber(get('sc-status')),
+      bytes: toNumber(get('sc-bytes')),
+      referer: get('cs(Referer)'),
+      agent: get('cs(User-Agent)')?.replace(/\+/g, ' '),
+      username: get('cs-username'),
+      vhost: get('cs-host'),
+    }, `${importId}:${lineNo}`, importId, get('s-computername')?.split('.')[0].toUpperCase() ?? fromFile ?? get('s-ip')))
   }
-  return {
-    id,
-    ts,
-    dataset: 'web.access',
-    sourceKind: 'server',
-    logsource: { category: 'webserver' },
-    host,
-    user: normalizeUser(a.user),
-    srcIp: cleanIp(a.client),
-    url: uri,
-    // The site's own name is not an indicator, so `domain` stays empty (it would land on a blocklist).
-    message: `${method} ${truncate(uri, 140)} → ${a.status ?? '-'}`,
-    importId,
-    fields,
-  }
+  return { events, errors }
 }

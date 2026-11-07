@@ -1,5 +1,5 @@
 import { loadAll } from 'js-yaml'
-import type { FieldValue, Level, Logsource, NormalizedEvent } from '@/core/model'
+import type { FieldValue, Level, Logsource, NormalizedEvent, Signal } from '@/core/model'
 import { ipInCidr } from '@/core/net'
 
 /**
@@ -10,7 +10,13 @@ import { ipInCidr } from '@/core/net'
  * - wildcards `*` / `?` in values, `null` for "field absent"
  * - conditions with and / or / not / parentheses, `1 of x*`, `all of x*`, `1 of them`
  * Not supported (rule is skipped with a reason): aggregations (`| count()`), base64 modifiers.
+ *
+ * SIGAP extension: a field value of exactly `${name}` expands to the list `vars[name]`, so a rule can
+ * refer to values that belong to the unit, such as its OT segments. An empty list matches nothing.
  */
+
+/** Values a rule can refer to as `${name}`. */
+export type RuleVars = Record<string, readonly string[]>
 
 export type RuleMeta = {
   id: string
@@ -25,7 +31,11 @@ export type RuleMeta = {
   falsepositives: string[]
   /** SIGAP extension: first-response steps in Bahasa Indonesia. */
   respons: string[]
+  /** SIGAP extension (`sinyal`): how much a match proves on its own. */
+  signal: Signal
   logsource: Logsource
+  /** Fields the rule reads, so coverage can tell when the logs do not carry them. */
+  fields?: string[]
 }
 
 type Expected = string | number | boolean | null
@@ -48,13 +58,14 @@ export class RuleError extends Error {}
 
 const SUPPORTED_MODS = new Set(['contains', 'startswith', 'endswith', 'all', 're', 'i', 'cidr', 'windash', 'gt', 'gte', 'lt', 'lte'])
 const LEVELS: Level[] = ['informational', 'low', 'medium', 'high', 'critical']
+const SIGNALS: Signal[] = ['kuat', 'ambigu', 'percobaan']
 
 function escapeRegex(text: string): string {
   return text.replace(/[.+^${}()|[\]\\*?]/g, '\\$&')
 }
 
-/** Sigma glob -> anchored, case-insensitive RegExp. `\*`, `\?` and `\\` are literal. */
-export function globToRegex(glob: string): RegExp {
+/** Regex source for a Sigma glob. `\*`, `\?` and `\\` are literal. */
+function globBody(glob: string): string {
   let out = ''
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i]
@@ -66,7 +77,12 @@ export function globToRegex(glob: string): RegExp {
     else if (c === '?') out += '.'
     else out += escapeRegex(c)
   }
-  return new RegExp(`^${out}$`, 'is')
+  return out
+}
+
+/** Sigma glob -> anchored, case-insensitive RegExp. */
+export function globToRegex(glob: string): RegExp {
+  return new RegExp(`^${globBody(glob)}$`, 'is')
 }
 
 function windashVariants(value: string): string[] {
@@ -74,32 +90,41 @@ function windashVariants(value: string): string[] {
   return ['-', '/', '–', '—'].map((dash) => value.replace(/(^|\s)-/g, `$1${dash}`))
 }
 
-function compileFieldTest(key: string, raw: unknown): FieldTest {
+function expandVar(raw: unknown, vars: RuleVars): unknown {
+  const name = typeof raw === 'string' ? /^\$\{(\w+)\}$/.exec(raw)?.[1] : undefined
+  if (name === undefined) return raw
+  if (!(name in vars)) throw new RuleError(`Variabel tidak dikenal: ${name}`)
+  return [...vars[name]]
+}
+
+function compileFieldTest(key: string, rawValue: unknown, vars: RuleVars): FieldTest {
   const [field, ...modList] = key.split('|')
   const mods = new Set(modList)
   for (const mod of mods) if (!SUPPORTED_MODS.has(mod)) throw new RuleError(`Modifier tidak didukung: ${mod}`)
+  const raw = expandVar(rawValue, vars)
   let values: Expected[] = (Array.isArray(raw) ? raw : [raw]).map((v) => (v === undefined ? null : (v as Expected)))
   if (mods.has('windash')) values = values.flatMap((v): Expected[] => (typeof v === 'string' ? windashVariants(v) : [v]))
   const numeric = mods.has('gt') || mods.has('gte') || mods.has('lt') || mods.has('lte')
   const patterns = values.map((v) => {
     if (v === null || numeric || mods.has('cidr')) return null
     if (mods.has('re')) return new RegExp(String(v), mods.has('i') ? 'i' : '')
-    const text = String(v)
-    const glob = mods.has('contains') ? `*${text}*` : mods.has('startswith') ? `${text}*` : mods.has('endswith') ? `*${text}` : text
-    return globToRegex(glob)
+    // Added around the value, not to it: `\AppData\` + `*` as text would read as a literal star.
+    const body = globBody(String(v))
+    const source = mods.has('contains') ? `.*${body}.*` : mods.has('startswith') ? `${body}.*` : mods.has('endswith') ? `.*${body}` : body
+    return new RegExp(`^${source}$`, 'is')
   })
   return { field, mods, values, patterns }
 }
 
-function compileSelection(name: string, raw: unknown): Selection {
+function compileSelection(name: string, raw: unknown, vars: RuleVars): Selection {
   if (Array.isArray(raw)) {
     if (raw.every((item) => typeof item === 'string' || typeof item === 'number')) {
       return { kind: 'keywords', patterns: raw.map((k) => globToRegex(`*${k}*`)) }
     }
-    return { kind: 'any', maps: raw.map((item, i) => compileSelection(`${name}[${i}]`, item)) }
+    return { kind: 'any', maps: raw.map((item, i) => compileSelection(`${name}[${i}]`, item, vars)) }
   }
   if (raw && typeof raw === 'object') {
-    return { kind: 'map', tests: Object.entries(raw as Record<string, unknown>).map(([k, v]) => compileFieldTest(k, v)) }
+    return { kind: 'map', tests: Object.entries(raw as Record<string, unknown>).map(([k, v]) => compileFieldTest(k, v, vars)) }
   }
   throw new RuleError(`Selection "${name}" tidak valid`)
 }
@@ -252,6 +277,8 @@ export function parseRuleMeta(doc: Record<string, unknown>, kind: RuleMeta['kind
     references: asStringList(doc.references),
     falsepositives: asStringList(doc.falsepositives),
     respons: asStringList(doc.respons),
+    // A rule that says nothing is not assumed to prove anything.
+    signal: SIGNALS.includes(doc.sinyal as Signal) ? (doc.sinyal as Signal) : 'ambigu',
     logsource: { product: logsource.product, category: logsource.category, service: logsource.service },
   }
 }
@@ -260,7 +287,7 @@ function logsourceMatches(rule: Logsource, event: Logsource): boolean {
   return (['product', 'category', 'service'] as const).every((key) => !rule[key] || rule[key]!.toLowerCase() === event[key]?.toLowerCase())
 }
 
-export function compileSigma(doc: Record<string, unknown>): CompiledRule {
+export function compileSigma(doc: Record<string, unknown>, vars: RuleVars = {}): CompiledRule {
   const meta = parseRuleMeta(doc, 'sigma')
   const detection = doc.detection as Record<string, unknown> | undefined
   if (!detection || typeof detection !== 'object') throw new RuleError('Bagian detection tidak ada')
@@ -270,11 +297,13 @@ export function compileSigma(doc: Record<string, unknown>): CompiledRule {
   if (!conditions.length) throw new RuleError('condition tidak ada')
 
   const names = Object.keys(rawSelections)
-  const selections = new Map(names.map((name) => [name, compileSelection(name, rawSelections[name])]))
+  const selections = new Map(names.map((name) => [name, compileSelection(name, rawSelections[name], vars)]))
   const tree: Node = conditions.length === 1 ? parseCondition(conditions[0]) : { op: 'or', args: conditions.map(parseCondition) }
   const positive = positiveNames(tree, names)
   const negated = positiveNames(tree, names, false)
   for (const name of [...positive, ...negated]) if (!selections.has(name)) throw new RuleError(`Selection "${name}" tidak didefinisikan`)
+  const fieldsOf = (sel: Selection): string[] => (sel.kind === 'map' ? sel.tests.map((t) => t.field) : sel.kind === 'any' ? sel.maps.flatMap(fieldsOf) : [])
+  meta.fields = [...new Set([...positive].flatMap((name) => fieldsOf(selections.get(name)!)))]
 
   return {
     meta,
@@ -321,7 +350,7 @@ export function compileSigma(doc: Record<string, unknown>): CompiledRule {
 export type LoadResult = { rules: CompiledRule[]; skipped: { source: string; reason: string }[] }
 
 /** Parses YAML rule documents (several per file allowed, separated by `---`). */
-export function loadSigmaRules(sources: Record<string, string>): LoadResult {
+export function loadSigmaRules(sources: Record<string, string>, vars: RuleVars = {}): LoadResult {
   const rules: CompiledRule[] = []
   const skipped: LoadResult['skipped'] = []
   for (const [source, text] of Object.entries(sources)) {
@@ -335,7 +364,7 @@ export function loadSigmaRules(sources: Record<string, string>): LoadResult {
     for (const doc of docs) {
       if (!doc || typeof doc !== 'object') continue
       try {
-        rules.push(compileSigma(doc as Record<string, unknown>))
+        rules.push(compileSigma(doc as Record<string, unknown>, vars))
       } catch (err) {
         skipped.push({ source: `${source}#${(doc as { id?: string }).id ?? '?'}`, reason: (err as Error).message })
       }

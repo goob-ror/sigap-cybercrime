@@ -21,6 +21,13 @@ export type AxmlManifest = {
   targetSdk?: number
   permissions: string[]
   labels: string[]
+  /**
+   * Permissions a component demands of its callers. An accessibility or device-admin service is declared
+   * this way (`<service android:permission=...>`), not with `<uses-permission>`.
+   */
+  componentPermissions?: string[]
+  /** Broadcast and intent actions the app listens for, e.g. incoming SMS. */
+  actions?: string[]
 }
 
 function readLen8(dv: DataView, p: number): [number, number] {
@@ -91,6 +98,10 @@ function parseStartElement(dv: DataView, base: number, header: number, strings: 
     if (attrs.targetSdkVersion) out.targetSdk = Number(attrs.targetSdkVersion)
   } else if (name === 'application' && attrs.label) {
     out.labels.push(attrs.label)
+  } else if ((name === 'service' || name === 'receiver' || name === 'activity') && attrs.permission) {
+    ;(out.componentPermissions ??= []).push(attrs.permission)
+  } else if (name === 'action' && attrs.name) {
+    ;(out.actions ??= []).push(attrs.name)
   }
 }
 

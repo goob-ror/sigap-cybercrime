@@ -1,4 +1,4 @@
-import { runDetections, type RulePack } from '@/core/detect/engine'
+import { foldAttempts, matchRules, runDetections, type RulePack } from '@/core/detect/engine'
 import { correlate } from '@/core/correlate/correlate'
 import { LEVEL_RANK } from '@/core/labels'
 import type { Detection, Incident, Level, NormalizedEvent, UnitProfile } from '@/core/model'
@@ -78,10 +78,11 @@ export class Penjaga {
     this.evict()
 
     const kept = this.ids
-    this.sigmaDetections = [...this.sigmaDetections.filter((d) => d.eventIds.every((id) => kept.has(id))), ...runDetections(fresh, this.sigmaOnly)]
-    this.detections = [...this.sigmaDetections, ...runDetections(this.events, this.nativeOnly)].sort((a, b) => a.ts - b.ts)
-
+    // Kept unfolded and folded over the whole window, so batches of any size give the same findings.
+    this.sigmaDetections = [...this.sigmaDetections.filter((d) => d.eventIds.every((id) => kept.has(id))), ...matchRules(fresh, this.sigmaOnly)]
     const byId = new Map(this.events.map((e) => [e.id, e]))
+    this.detections = foldAttempts([...this.sigmaDetections, ...runDetections(this.events, this.nativeOnly)], (id) => byId.get(id))
+
     const alerts: Alert[] = []
     for (const d of this.detections) {
       const keys = d.eventIds.map((id) => `${d.ruleId}|${id}`)

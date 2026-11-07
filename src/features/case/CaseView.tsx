@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Activity, ArrowRight, Ban, BookText, CheckSquare, ClipboardList, FileSearch, FileText, GitBranch, History, ShieldAlert, StickyNote, Upload, UserRound } from 'lucide-react'
+import { AssessmentBadge } from '@/components/AssessmentBadge'
 import { ScoreBreakdown } from '@/components/ScoreBreakdown'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
@@ -54,12 +55,12 @@ export function CaseView({ data, caseId, selectCase, actor, notify, changeFollow
   const files = new Set(dets.flatMap((d) => d.eventIds).map((id) => data.eventsById.get(id)?.importId).filter(Boolean)).size
 
   return <div className="mx-auto max-w-[1600px]">
-    <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end"><PageTitle eyebrow={`Kasus / ${c.id}`} title={c.title} text={incident ? incident.path.map(name).join(' → ') || 'Satu aset' : 'Insiden tidak ditemukan'} /><div className="flex flex-wrap gap-2">{incident && <Badge className={levelStyle[incident.level]}>{LEVEL_LABEL[incident.level].toUpperCase()} · {scorePercent(incident.score)}%</Badge>}<Badge className={caseStatusStyle[c.status]}>{CASE_STATUS_LABEL[c.status].toUpperCase()}</Badge></div></div>
+    <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end"><PageTitle eyebrow={`Kasus / ${c.id}`} title={c.title} text={incident ? incident.path.map(name).join(' → ') || 'Satu aset' : 'Insiden tidak ditemukan'} /><div className="flex flex-wrap gap-2">{incident && <AssessmentBadge incident={incident} />}{incident && <Badge className={levelStyle[incident.level]}>{LEVEL_LABEL[incident.level].toUpperCase()} · {scorePercent(incident.score)}%</Badge>}<Badge className={caseStatusStyle[c.status]}>{CASE_STATUS_LABEL[c.status].toUpperCase()}</Badge></div></div>
 
     <div className={`grid grid-cols-1 gap-4 ${list.length > 1 ? 'xl:grid-cols-[260px_minmax(0,1fr)]' : ''}`}>
       {list.length > 1 && <aside className="space-y-2 xl:sticky xl:top-20 xl:self-start"><Label>Antrean kasus ({list.length})</Label>{list.map(({ c: x, incident: inc }) => <button key={x.id} onClick={() => selectCase(x.id)} className={`w-full rounded-lg border p-3 text-left transition ${x.id === c.id ? 'border-[#38BDF8]/50 bg-[#38BDF8]/5' : 'border-[#272E3A] bg-[#131720] hover:border-[#3A4554]'}`}><div className="flex items-center justify-between gap-2"><span className="font-mono text-[11px] text-[#7DD3FC]">{x.id}</span><Badge className={caseStatusStyle[x.status]}>{CASE_STATUS_LABEL[x.status]}</Badge></div><div className="mt-1.5 line-clamp-2 text-xs font-medium">{x.title}</div><div className="mt-1 font-mono text-[10px] text-[#657080]">{inc ? `${scorePercent(inc.score)}% · ${inc.detectionIds.length} temuan · ${fmtTime(inc.firstSeen, false)}` : '—'}</div></button>)}</aside>}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_.8fr]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,.8fr)]">
         <div className="space-y-4">
           <Card title="Detail Kasus" icon={<ClipboardList size={16} className="text-[#38BDF8]" />}>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{[

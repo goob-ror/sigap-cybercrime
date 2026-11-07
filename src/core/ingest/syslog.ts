@@ -38,7 +38,7 @@ export function syslogTime(s: SyslogLine, defaultYear: number, defaultOffset: st
 }
 
 /** `web-satuan-01.satuan.local` -> `WEB-SATUAN-01`; addresses are kept as they are. */
-function hostOf(hostname: string): string {
+export function hostOf(hostname: string): string {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':') ? hostname : hostname.split('.')[0].toUpperCase()
 }
 
@@ -83,8 +83,15 @@ function authInfo(program: string, msg: string): AuthInfo {
   return {}
 }
 
-export function normalizeSyslog(s: SyslogLine, id: string, importId: string, defaultYear: number, defaultOffset: string): NormalizedEvent | null {
-  const ts = syslogTime(s, defaultYear, defaultOffset)
+/** True when the line carries its own year and zone, so nothing about its time had to be assumed. */
+export const syslogHasZone = (s: SyslogLine) => !!s.iso && /(Z|[+-]\d{2}:?\d{2})$/.test(s.iso)
+
+const DAY_MS = 24 * 60 * 60_000
+
+export function normalizeSyslog(s: SyslogLine, id: string, importId: string, defaultYear: number, defaultOffset: string, now = Date.now()): NormalizedEvent | null {
+  let ts = syslogTime(s, defaultYear, defaultOffset)
+  // BSD timestamps have no year: a December line read in January is last month's, not next December's.
+  if (ts !== undefined && !s.iso && ts > now + DAY_MS) ts = syslogTime(s, defaultYear - 1, defaultOffset)
   if (ts === undefined) return null
   const info = authInfo(s.program, s.message)
   const fields: Record<string, FieldValue> = {

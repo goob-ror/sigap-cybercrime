@@ -1,17 +1,22 @@
-import type { Artifact, Case, CustodyEntry, Detection, Incident, NormalizedEvent } from '@/core/model'
+import { otSummaryLines, type OtAnalysis } from '@/core/ot/analysis'
+import type { Coverage } from '@/core/coverage'
+import type { Artifact, Case, CustodyEntry, Detection, Incident, NormalizedEvent, UnitProfile } from '@/core/model'
 import { appendCustody, verifyCustodyChain, type ChainCheck } from '@/core/evidence/custody'
-import { sha256Hex } from '@/core/evidence/hash'
+import { parseManifest, sha256Hex } from '@/core/evidence/hash'
+import { checkSignature, SIGNATURE_FILE, type SignatureCheck } from '@/core/evidence/signing'
 import { isIndicator } from '@/core/report/ioc'
-import { incidentStory, incidentSummary, priorityActions, scorePercent } from '@/core/report/narrative'
+import { ASSESSMENT, assessmentOf, incidentStory, incidentSummary, priorityActions, scorePercent } from '@/core/report/narrative'
 import { LEVEL_LABEL } from '@/core/labels'
 import { RULES } from '@/data/rules/catalog'
 import { fmtDate, fmtDateTime, fmtNumber, fmtTime } from '@/lib/format'
 
 /**
- * Assembles a tamper-evident evidence package (a set of files to zip) for escalating a case, plus
- * a verifier. Integrity is hash-based, not signed: a MANIFEST lists the SHA-256 of every content
- * file, and a hash-linked chain of custody records the source files and binds the manifest. All
- * offline and deterministic (the caller passes `generatedAt`).
+ * Assembles an evidence package (a set of files to zip) for escalating a case, plus a verifier. A
+ * MANIFEST lists the SHA-256 of every content file and a hash-linked chain of custody records what
+ * happened and binds the manifest, so an accidental or careless change shows. Those alone can be
+ * recomputed by anyone after a deliberate edit, so the package also carries a signature
+ * (`signing.ts`), which shows only if the recipient compares the key's fingerprint. All offline and
+ * deterministic (the caller passes `generatedAt`).
  */
 
 export type EvidenceInput = {
@@ -23,6 +28,19 @@ export type EvidenceInput = {
   /** Source log files (metadata + original SHA-256 from import). */
   sources: Artifact[]
   actor: string
+  /** The unit profile the findings were computed with; other findings can follow from another profile. */
+  profile: UnitProfile
+  /**
+   * Add the profile itself to the package. It is a map of the unit's network, and the ZIP is not
+   * encrypted, so it stays out unless asked for. Its name and hash are recorded either way.
+   */
+  includeProfile?: boolean
+  /** What the imported logs let the rules see, so a reader knows what the report could not have found. */
+  coverage?: Coverage | null
+  /** What the Modbus traffic says happened to the equipment, when this incident reached it. */
+  ot?: OtAnalysis | null
+  /** The custody log kept since the first import. Without it, one is rebuilt from the source files. */
+  custodyLog?: readonly CustodyEntry[]
   generatedAt: number
 }
 
@@ -32,7 +50,13 @@ const MANIFEST = 'MANIFEST-SHA256.txt'
 const CHAIN = 'rantai-bukti.json'
 const ENTITY_LABEL: Record<string, string> = { ip: 'IP eksternal', domain: 'Domain', hash: 'Hash berkas', host: 'Host', device: 'Perangkat OT', user: 'Akun', file: 'Berkas' }
 
-const esc = (s: unknown): string => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
+const esc = (s: unknown): string => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+
+/** Which sources the rules could and could not read, in words for a report. */
+export function coverageLines(coverage: Coverage): string[] {
+  const missing = coverage.gaps.map((g) => `${g.label}: ${g.status === 'tidak-ada' ? 'tidak ada data' : 'sebagian'} (${g.rulesWithData} dari ${g.rules} aturan dapat berjalan)`)
+  return [`${coverage.rulesWithData} dari ${coverage.rulesTotal} aturan deteksi memiliki data untuk diperiksa. Aktivitas yang hanya terlihat oleh aturan lainnya tidak akan muncul di laporan ini.`, ...missing, ...coverage.warnings]
+}
 
 /** A self-contained, offline HTML report (inline CSS, no external references). */
 export function reportHtml(input: EvidenceInput): string {
@@ -47,6 +71,8 @@ export function reportHtml(input: EvidenceInput): string {
 
   const row = (cells: string[]) => `<tr>${cells.map((x) => `<td>${x}</td>`).join('')}</tr>`
   const section = (title: string, body: string) => `<section><h2>${esc(title)}</h2>${body}</section>`
+  const marking = input.profile.reportMarking ? `<div class="mark">${esc(input.profile.reportMarking)}</div>` : ''
+  const assessment = ASSESSMENT[assessmentOf(incident)]
 
   return `<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Laporan Insiden ${esc(c.id)}</title><style>
@@ -59,18 +85,21 @@ table{width:100%;border-collapse:collapse;font-size:.8rem}td,th{border-bottom:1p
 th{font-size:.68rem;text-transform:uppercase;color:#94a3b8}code,.mono{font-family:ui-monospace,Consolas,monospace;font-size:.76rem}
 .path{font-family:ui-monospace,Consolas,monospace;color:#0369a1;font-size:.8rem}ol,ul{margin:.3em 0;padding-left:1.2em}li{margin:.2em 0}
 .foot{font-size:.68rem;color:#94a3b8;padding:8px 4px}.tag{display:inline-block;border:1px solid #cbd5e1;border-radius:4px;padding:0 5px;font-size:.66rem}
+.mark{text-align:center;font-weight:700;letter-spacing:.08em;font-size:.8rem;margin:0 0 12px}
 </style></head><body><div class="wrap">
-<div class="head"><div class="tag" style="border-color:#334155;color:#93c5fd">SIGAP · LAPORAN ANALISIS INSIDEN SIBER</div>
-<h1>${esc(c.title)}</h1><div class="meta"><span>${esc(c.id)}</span><span>${esc(fmtDate(incident.firstSeen))}</span><span>TINGKAT: ${esc(LEVEL_LABEL[incident.level].toUpperCase())}</span><span>KEYAKINAN: ${scorePercent(incident.score)}%</span><span>PETUGAS: ${esc(c.assignee || '—')}</span></div></div>
+${marking}<div class="head"><div class="tag" style="border-color:#334155;color:#93c5fd">SIGAP · LAPORAN ANALISIS INSIDEN SIBER</div>
+<h1>${esc(c.title)}</h1><div class="meta"><span>${esc(c.id)}</span><span>${esc(fmtDate(incident.firstSeen))}</span><span>PENILAIAN: ${esc(assessment.label.toUpperCase())}</span><span>TINGKAT: ${esc(LEVEL_LABEL[incident.level].toUpperCase())}</span><span>SKOR PRIORITAS: ${scorePercent(incident.score)}%</span><span>PETUGAS: ${esc(c.assignee || '—')}</span><span>SATUAN: ${esc(input.profile.name)}</span></div></div>
 ${section('01 / Ringkasan eksekutif', `<p>${esc(incidentSummary(incident, steps))}</p>${incident.path.length > 1 ? `<p class="path">${incident.path.map((k) => esc(name(k))).join(' → ')}</p>` : ''}`)}
 ${section('02 / Kronologi (WIB)', `<table><thead><tr><th>Waktu</th><th>Tahap</th><th>Temuan</th></tr></thead><tbody>${steps.map((s) => row([esc(fmtTime(s.first, false)), esc(s.label), esc(s.detections.map((d) => d.title).join('; ')) + (s.places.length ? `<br><span class="mono" style="color:#94a3b8">${esc(s.places.join(', '))}</span>` : '')])).join('')}</tbody></table>`)}
 ${section('03 / Temuan', `<table><thead><tr><th>Waktu</th><th>Temuan</th><th>ATT&CK</th><th>Tingkat</th></tr></thead><tbody>${ordered.map((d) => row([esc(fmtTime(d.ts, false)), esc(d.title), `<span class="mono">${esc(d.attack.join(', '))}</span>`, esc(LEVEL_LABEL[d.level])])).join('')}</tbody></table>`)}
-${section('04 / Indikator (usulkan blokir)', indicators.length ? `<table><thead><tr><th>Jenis</th><th>Nilai</th><th>Temuan</th></tr></thead><tbody>${indicators.map((e) => row([esc(ENTITY_LABEL[e.type] ?? e.type), `<span class="mono">${esc(e.value)}</span>`, String(e.detectionIds.length)])).join('')}</tbody></table>` : '<p>Tidak ada indikator eksternal.</p>')}
+${section('04 / Indikator (tinjau sebelum memblokir)', indicators.length ? `<table><thead><tr><th>Jenis</th><th>Nilai</th><th>Temuan</th></tr></thead><tbody>${indicators.map((e) => row([esc(ENTITY_LABEL[e.type] ?? e.type), `<span class="mono">${esc(e.value)}</span>`, String(e.detectionIds.length)])).join('')}</tbody></table>` : '<p>Tidak ada indikator eksternal.</p>')}
 ${section('05 / Rekomendasi prioritas', actions.length ? `<ol>${actions.map((a) => `<li><b>[${esc(LEVEL_LABEL[a.level])}]</b> ${esc(a.text)} <span class="mono" style="color:#94a3b8">(${esc(a.ruleTitle)})</span></li>`).join('')}</ol>` : '<p>Tidak ada temuan kritis/tinggi.</p>')}
 ${section('06 / Catatan analis', `<p>${esc(c.notes || 'Belum ada catatan.')}</p>`)}
 ${section('07 / Sumber data', `<table><thead><tr><th>Berkas</th><th>Event</th><th>SHA-256</th></tr></thead><tbody>${input.sources.map((a) => row([esc(a.filename), fmtNumber((a.analysis as { eventCount?: number } | undefined)?.eventCount ?? 0), `<span class="mono" style="font-size:.66rem">${esc(a.sha256)}</span>`])).join('')}</tbody></table>`)}
-<div class="foot">Dibuat oleh SIGAP pada ${esc(fmtDateTime(input.generatedAt))} untuk ${esc(input.actor)}. Keterkaitan antar-temuan adalah hasil korelasi otomatis dan perlu diverifikasi. Integritas paket: lihat ${MANIFEST} dan ${CHAIN}.</div>
-</div></body></html>
+${input.coverage ? section('08 / Cakupan analisis', `<ul>${coverageLines(input.coverage).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`) : ''}
+${input.ot?.incidentId === incident.id && otSummaryLines(input.ot).length ? section('09 / Dampak pada proses OT', `<ul>${otSummaryLines(input.ot).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`) : ''}
+<div class="foot">Dibuat oleh SIGAP pada ${esc(fmtDateTime(input.generatedAt))} untuk ${esc(input.actor)}. Keterkaitan antar-temuan adalah hasil korelasi otomatis dan perlu diverifikasi. Laporan ini adalah bahan tanggap awal, bukan hasil pemeriksaan forensik. Integritas paket: lihat ${MANIFEST}, ${CHAIN}, dan ${SIGNATURE_FILE}.</div>
+${marking}</div></body></html>
 `
 }
 
@@ -84,6 +113,7 @@ export function buildEvidenceFiles(input: EvidenceInput): EvidenceFile[] {
     `Kasus    : ${input.case.id} — ${input.case.title}`,
     `Dibuat   : ${fmtDateTime(input.generatedAt)}`,
     `Oleh     : ${input.actor}`,
+    `Satuan   : ${input.profile.name}`,
     '',
     'Isi paket:',
     '- laporan.html         Laporan insiden mandiri (buka di peramban mana pun).',
@@ -92,16 +122,24 @@ export function buildEvidenceFiles(input: EvidenceInput): EvidenceFile[] {
     '- kasus.json           Kasus: status, catatan, tindak lanjut, riwayat.',
     '- events.jsonl         Event yang memicu temuan (satu JSON per baris).',
     '- sumber.json          Berkas log sumber + SHA-256 saat diimpor.',
+    ...(input.includeProfile ? ['- profil-satuan.json   Profil jaringan yang dipakai saat temuan dihitung. Berisi peta jaringan satuan.'] : []),
     '- asli/                Berkas log asli (bila tersimpan), untuk verifikasi & urai ulang.',
-    `- ${CHAIN}    Rantai bukti berantai-hash (chain of custody).`,
-    `- ${MANIFEST}   SHA-256 setiap berkas isi untuk verifikasi.`,
+    `- ${CHAIN}    Catatan penanganan berantai-hash (chain of custody).`,
+    `- ${MANIFEST}   SHA-256 setiap berkas isi.`,
+    `- ${SIGNATURE_FILE}    Tanda tangan digital paket dan kunci publiknya.`,
     '',
     'Verifikasi:',
-    '- Di SIGAP: halaman Laporan → "Verifikasi paket bukti" → pilih berkas ZIP ini.',
+    '- Di SIGAP: halaman Laporan → "Verifikasi Paket Bukti" → pilih berkas ZIP ini.',
     `- Manual: hitung SHA-256 tiap berkas dan cocokkan dengan ${MANIFEST}.`,
+    '- Cocokkan sidik jari kunci dengan yang didaftarkan pengirim lewat jalur lain (mis. berita acara).',
+    '  Tanpa langkah ini, orang yang mengubah isi paket dapat menandatanganinya kembali dengan kunci sendiri.',
     '',
-    'Catatan: integritas bersifat tamper-evident (berantai-hash), bukan tanda tangan digital.',
-    'Berkas log asli disertakan di folder asli/ bila tersimpan; SHA-256-nya tercatat di MANIFEST.',
+    'Batasannya:',
+    '- ZIP ini TIDAK terenkripsi. Isinya log, nama akun, dan alamat satuan: simpan pada media terenkripsi',
+    '  dan perlakukan sesuai ketentuan klasifikasi satuan.',
+    '- Ini bahan tanggap awal, bukan hasil pemeriksaan forensik. Log dikumpulkan dari komputer yang mungkin',
+    '  sudah disusupi, nama operator diisi sendiri, dan waktu berasal dari jam komputer tersebut.',
+    '  Untuk proses hukum atau disiplin, serahkan kepada pemeriksa forensik yang berwenang.',
   ].join('\n') + '\n'
 
   return [
@@ -112,6 +150,7 @@ export function buildEvidenceFiles(input: EvidenceInput): EvidenceFile[] {
     { name: 'kasus.json', text: JSON.stringify(input.case, null, 2) },
     { name: 'events.jsonl', text: events.map((e) => JSON.stringify(e)).join('\n') + '\n' },
     { name: 'sumber.json', text: JSON.stringify(input.sources.map((a) => ({ filename: a.filename, sha256: a.sha256, size: a.size, kind: a.kind, addedAt: a.addedAt })), null, 2) },
+    ...(input.includeProfile ? [{ name: 'profil-satuan.json', text: JSON.stringify(input.profile, null, 2) }] : []),
   ]
 }
 
@@ -119,34 +158,41 @@ export function renderManifest(entries: { name: string; hash: string }[]): strin
   return ['# SIGAP — SHA-256 berkas paket bukti', ...entries.map((e) => `${e.hash}  ${e.name}`)].join('\n') + '\n'
 }
 
-export function parseManifest(text: string): { name: string; hash: string }[] {
-  return text.split(/\r?\n/).map((l) => /^([0-9a-f]{64})\s+(.+)$/i.exec(l.trim())).filter((m): m is RegExpExecArray => !!m).map((m) => ({ hash: m[1].toLowerCase(), name: m[2] }))
-}
-
-/** Chain of custody: one entry per source import, an 'analyzed' entry, then an 'exported' entry that binds the manifest. */
+/**
+ * Chain of custody: the log kept since the first import (imports, profile changes), then an 'analyzed'
+ * entry and an 'exported' entry that binds the manifest. Rebuilt from the source files only when no log
+ * exists, in which case the import entries are a reconstruction rather than a record.
+ */
 export async function buildCustodyChain(input: EvidenceInput, manifestHash: string, fileCount: number): Promise<CustodyEntry[]> {
-  let chain: CustodyEntry[] = []
-  for (const a of [...input.sources].sort((x, y) => x.addedAt - y.addedAt)) {
-    chain = await appendCustody(chain, { ts: a.addedAt, actor: a.addedBy || input.actor, action: 'imported', artifactId: a.id, artifactSha256: a.sha256, detail: `Impor ${a.filename}` })
+  let chain: CustodyEntry[] = [...(input.custodyLog ?? [])]
+  if (!chain.length) {
+    for (const a of [...input.sources].sort((x, y) => x.addedAt - y.addedAt)) {
+      chain = await appendCustody(chain, { ts: a.addedAt, actor: a.addedBy || input.actor, action: 'imported', artifactId: a.id, artifactSha256: a.sha256, detail: `Impor ${a.filename}` })
+    }
   }
-  chain = await appendCustody(chain, { ts: input.generatedAt, actor: input.actor, action: 'analyzed', detail: `Analisis ${input.case.id}: ${input.detections.length} temuan, skor ${scorePercent(input.incident.score)}%` })
+  const profileHash = await sha256Hex(JSON.stringify(input.profile))
+  chain = await appendCustody(chain, { ts: input.generatedAt, actor: input.actor, action: 'analyzed', detail: `Analisis ${input.case.id}: ${input.detections.length} temuan, penilaian ${ASSESSMENT[assessmentOf(input.incident)].label}, skor prioritas ${scorePercent(input.incident.score)}%, profil "${input.profile.name}" (SHA-256 ${profileHash})${input.coverage ? `, ${input.coverage.rulesWithData} dari ${input.coverage.rulesTotal} aturan memiliki data` : ''}` })
   chain = await appendCustody(chain, { ts: input.generatedAt, actor: input.actor, action: 'exported', artifactSha256: manifestHash, detail: `Ekspor paket bukti (${fileCount} berkas)` })
   return chain
 }
 
 export type EvidenceVerification = {
+  /** The contents match the manifest and chain, with nothing added. Says nothing about who made the package: see `signature`. */
   ok: boolean
   manifestFound: boolean
   files: { name: string; ok: boolean; reason?: string }[]
+  /** Files in the ZIP that the manifest does not list. */
+  unlisted: string[]
   chain: ChainCheck | { ok: false; reason: string }
   manifestBound: boolean
+  signature: SignatureCheck
 }
 
-/** Re-check an unzipped package: every content file's hash vs MANIFEST, the custody chain, and the manifest↔chain binding. */
+/** Re-check an unzipped package: every file's hash vs MANIFEST, the custody chain, the manifest↔chain binding, and the signature. */
 export async function verifyEvidencePackage(files: { name: string; bytes: Uint8Array }[]): Promise<EvidenceVerification> {
   const byName = new Map(files.map((f) => [f.name, f.bytes]))
   const manifestBytes = byName.get(MANIFEST)
-  if (!manifestBytes) return { ok: false, manifestFound: false, files: [], chain: { ok: false, reason: `${MANIFEST} tidak ditemukan` }, manifestBound: false }
+  if (!manifestBytes) return { ok: false, manifestFound: false, files: [], unlisted: [], chain: { ok: false, reason: `${MANIFEST} tidak ditemukan` }, manifestBound: false, signature: { status: 'tidak-ada' } }
   const manifestText = new TextDecoder().decode(manifestBytes)
   const entries = parseManifest(manifestText)
 
@@ -174,6 +220,9 @@ export async function verifyEvidencePackage(files: { name: string; bytes: Uint8A
     }
   }
 
-  const ok = fileResults.every((f) => f.ok) && chain.ok && bound
-  return { ok, manifestFound: true, files: fileResults, chain, manifestBound: bound }
+  const listed = new Set([...entries.map((e) => e.name), MANIFEST, CHAIN, SIGNATURE_FILE])
+  const unlisted = files.map((f) => f.name).filter((name) => !listed.has(name))
+  const signature = await checkSignature(byName.get(SIGNATURE_FILE), manifestText, chainBytes ? new TextDecoder().decode(chainBytes) : '')
+  const ok = fileResults.every((f) => f.ok) && chain.ok && bound && unlisted.length === 0 && signature.status !== 'tidak-sah'
+  return { ok, manifestFound: true, files: fileResults, unlisted, chain, manifestBound: bound, signature }
 }

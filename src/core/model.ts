@@ -36,12 +36,22 @@ export type NormalizedEvent = {
   fields: Record<string, FieldValue>
 }
 
+/**
+ * How much a match proves on its own:
+ * - `kuat`: rarely seen in normal work, e.g. an LSASS dump or a login right after password guessing.
+ * - `ambigu`: an admin doing normal work triggers it too, e.g. PsExec, a new account, a scheduled task.
+ * - `percobaan`: someone tried; nothing shows it worked. Public servers see this every day.
+ */
+export type Signal = 'kuat' | 'ambigu' | 'percobaan'
+
 /** A rule match on one or more events. */
 export type Detection = {
   id: string
   ruleId: string
   title: string
   level: Level
+  /** Absent on results stored by an older version, which are recomputed on open. */
+  signal?: Signal
   /** ATT&CK / ATT&CK for ICS technique IDs, e.g. `T1059.001`, `T0836`. */
   attack: string[]
   eventIds: string[]
@@ -70,14 +80,22 @@ export type IncidentEntity = Entity & {
 /** A directed link between two entities of an incident, e.g. `WS-MIN-03 -> 203.0.113.66 (HTTPS :443)`. */
 export type Relation = { from: string; to: string; labels: string[]; count: number; level: Level; detectionIds: string[]; firstSeen: number }
 
-/** One term of the explainable confidence score `1 - Π(1 - weight)`. */
-export type ScoreTerm = { kind: 'rule' | 'killchain' | 'sources'; label: string; weight: number; level?: Level; count?: number }
+/** One term of the explainable priority score `1 - Π(1 - weight)`. */
+export type ScoreTerm = { kind: 'rule' | 'killchain' | 'sources'; label: string; weight: number; level?: Level; signal?: Signal; count?: number }
+
+/**
+ * What an incident's evidence supports, from its strongest finding. The operator acts on this; the
+ * score only orders the queue.
+ */
+export type Assessment = 'indikasi-kuat' | 'perlu-konfirmasi' | 'hanya-percobaan'
 
 /** Detections linked by shared entities within a time window. */
 export type Incident = {
   id: string
   caseId?: string
   title: string
+  /** Absent on results stored by an older version, which are recomputed on open. */
+  assessment?: Assessment
   /** Assets in order of first appearance (entity keys), e.g. workstation -> server -> PLC. */
   path: string[]
   level: Level
@@ -129,6 +147,21 @@ export type UnitProfile = {
   /** Outbound volume to one external destination that counts as possible exfiltration. */
   uploadThresholdBytes: number
   assets: UnitAsset[]
+  /** Domains the unit owns, e.g. `satuan.mil.id`. Never proposed for blocking, with their subdomains. */
+  ownDomains?: string[]
+  /** Modbus points of the unit's own generator. Absent or empty: the rules that read them stay silent. */
+  ot?: {
+    runCoils?: number[]
+    setpointRegisters?: number[]
+    setpointMin?: number
+    setpointMax?: number
+    /** Holding register the controller reports its running state in (0 = stopped). */
+    runStatusRegister?: number
+    /** Registers worth following on the Lintas IT-OT page, such as the output voltage. */
+    measuredRegisters?: { address: number; label: string; unit?: string }[]
+  }
+  /** Marking printed on reports, set according to the unit's rules, e.g. the classification level. */
+  reportMarking?: string
 }
 
 /** A file brought into SIGAP: an imported log, an APK under triage, or exported evidence. */

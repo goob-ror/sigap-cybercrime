@@ -1,8 +1,13 @@
 node_modules
 dist
+dist-agent
+dist-kit
 .git
 .github
 docs/screenshots
 *.log
 npm-debug.log*
 .DS_Store
+# API keys must never reach an image layer. They are given when the container starts: docker run --env-file .env
+.env
+.env.*

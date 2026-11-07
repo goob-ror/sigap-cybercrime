@@ -1,0 +1,16 @@
+{
+  "name": "SIGAP - Penanganan Awal Insiden Siber",
+  "short_name": "SIGAP",
+  "description": "Perangkat tanggap awal insiden siber yang berjalan offline, untuk satuan tanpa analis khusus.",
+  "lang": "id",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#090B0F",
+  "theme_color": "#090B0F",
+  "icons": [
+    { "src": "./icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "./icons/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

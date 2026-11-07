@@ -1,9 +1,12 @@
-import { Activity, ArrowRight, ChevronRight, ClipboardList, Database, GitBranch, ListChecks, Route, ShieldAlert, Upload } from 'lucide-react'
+import { Activity, ArrowRight, ChevronRight, ClipboardList, Database, Factory, GitBranch, ListChecks, Route, ShieldAlert, TriangleAlert, Upload } from 'lucide-react'
+import { AssessmentBadge } from '@/components/AssessmentBadge'
+import { CoverageCard } from '@/components/CoverageCard'
 import { KindMark } from '@/components/KindMark'
 import { ScoreBreakdown } from '@/components/ScoreBreakdown'
 import { Badge } from '@/components/ui/Badge'
 import { Card } from '@/components/ui/Card'
 import { PageTitle } from '@/components/ui/PageTitle'
+import type { Coverage } from '@/core/coverage'
 import type { Detection, Level, SourceKind } from '@/core/model'
 import { affectedAssets, incidentFacts, incidentStory, incidentSummary, priorityActions, scorePercent } from '@/core/report/narrative'
 import type { Investigation } from '@/db/hooks'
@@ -18,11 +21,12 @@ type Props = {
   openGraph: (incidentId: string) => void
   openTimeline: () => void
   openDetail: (detectionId: string) => void
+  openOt: () => void
 }
 
 const LEVELS: Level[] = ['critical', 'high', 'medium', 'low', 'informational']
 
-export function SummaryView({ data, openImport, openCase, openGraph, openTimeline, openDetail }: Props) {
+export function SummaryView({ data, openImport, openCase, openGraph, openTimeline, openDetail, openOt }: Props) {
   const { detections, incidents, stats } = data
 
   if (!data.eventCount) {
@@ -40,21 +44,24 @@ export function SummaryView({ data, openImport, openCase, openGraph, openTimelin
   const datasets = Object.keys(stats?.byDataset ?? {}).length
 
   return <div className="mx-auto max-w-[1600px]">
-    <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end"><PageTitle eyebrow="Pusat Investigasi" title="Ringkasan" text="Gambaran insiden yang ditemukan pada log yang diimpor. Semua angka dan kalimat di halaman ini disusun dari data di browser ini." /><Badge className={incidents.length ? 'border-[#EF4444]/25 bg-[#EF4444]/10 text-[#FCA5A5]' : 'border-[#22C55E]/25 bg-[#22C55E]/10 text-[#86EFAC]'}>{incidents.length} INSIDEN</Badge></div>
+    <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end"><PageTitle eyebrow="Pusat Investigasi" title="Ringkasan" text="Gambaran insiden yang ditemukan pada log yang diimpor. Semua angka dan kalimat di halaman ini disusun dari data di browser ini." /><Badge className={incidents.some((i) => i.assessment === 'indikasi-kuat') ? 'border-[#EF4444]/25 bg-[#EF4444]/10 text-[#FCA5A5]' : 'border-[#272E3A] bg-[#131720] text-[#AEB6C1]'}>{incidents.length} INSIDEN</Badge></div>
 
     <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">{([
       ['Event diperiksa', fmtNumber(data.eventCount), `${datasets} jenis log · ${stats?.hosts ?? 0} host`, Database, '#38BDF8'],
       ['Temuan', fmtNumber(detections.length), `${fmtNumber(urgent)} kritis/tinggi · ${new Set(detections.map((d) => d.ruleId)).size} aturan`, ShieldAlert, '#EF4444'],
-      ['Insiden terkorelasi', fmtNumber(incidents.length), top ? `skor tertinggi ${scorePercent(top.score)}%` : 'tidak ada', GitBranch, '#F59E0B'],
-      ['Aset terdampak', fmtNumber(affected.size), `${accounts.size} akun terlibat`, Route, '#22C55E'],
+      ['Insiden terkorelasi', fmtNumber(incidents.length), top ? `skor prioritas tertinggi ${scorePercent(top.score)}%` : 'tidak ada', GitBranch, '#F59E0B'],
+      ['Aset terkait', fmtNumber(affected.size), `${accounts.size} akun terlibat`, Route, '#22C55E'],
     ] as const).map(([label, value, sub, Icon, color]) => <div key={label} className="rounded-xl border border-[#272E3A] bg-[#131720] p-4"><div className="flex items-center justify-between text-xs text-[#7E8998]">{label}<span className="grid size-8 place-items-center rounded-lg bg-[#0D1016]" style={{ color }}><Icon size={15} /></span></div><div className="mt-3 font-mono text-2xl font-semibold">{value}</div><div className="mt-1 text-[10px] text-[#657080]">{sub}</div></div>)}</div>
 
-    {!top ? <div className="mt-4 rounded-xl border border-[#22C55E]/25 bg-[#22C55E]/5 p-6"><h2 className="font-semibold">Tidak ada temuan</h2><p className="mt-1 text-sm text-[#8D97A6]">{fmtNumber(data.eventCount)} event diperiksa dengan {RULES.size} aturan dan tidak ada yang terpicu.</p></div> : <>
+    {!top ? <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_.65fr]">
+      <NoFindings eventCount={data.eventCount} coverage={data.coverage} />
+      {data.coverage && <CoverageCard coverage={data.coverage} />}
+    </div> : <>
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_.65fr]">
-        <section className="relative overflow-hidden rounded-xl border border-[#EF4444]/25 bg-gradient-to-br from-[#1A1D25] to-[#11151C] p-6">
-          <div className="absolute -right-16 -top-20 size-64 rounded-full bg-[#EF4444]/5 blur-3xl" />
+        <section className={`relative overflow-hidden rounded-xl border bg-gradient-to-br from-[#1A1D25] to-[#11151C] p-6 ${top.assessment === 'indikasi-kuat' ? 'border-[#EF4444]/25' : top.assessment === 'perlu-konfirmasi' ? 'border-[#F59E0B]/25' : 'border-[#38BDF8]/25'}`}>
+          {top.assessment === 'indikasi-kuat' && <div className="absolute -right-16 -top-20 size-64 rounded-full bg-[#EF4444]/5 blur-3xl" />}
           <div className="relative">
-            <div className="flex flex-wrap items-center gap-2"><Badge className={levelStyle[top.level]}>{LEVEL_LABEL[top.level].toUpperCase()}</Badge>{topCase && <><span className="font-mono text-[11px] text-[#AEB6C1]">{topCase.id}</span><Badge className={caseStatusStyle[topCase.status]}>{CASE_STATUS_LABEL[topCase.status].toUpperCase()}</Badge></>}<span className="font-mono text-[10px] text-[#657080]">{fmtDate(top.firstSeen)} · {fmtTime(top.firstSeen, false)}–{fmtTime(top.lastSeen, false)} WIB</span></div>
+            <div className="flex flex-wrap items-center gap-2"><AssessmentBadge incident={top} /><Badge className={levelStyle[top.level]}>{LEVEL_LABEL[top.level].toUpperCase()}</Badge>{topCase && <><span className="font-mono text-[11px] text-[#AEB6C1]">{topCase.id}</span><Badge className={caseStatusStyle[topCase.status]}>{CASE_STATUS_LABEL[topCase.status].toUpperCase()}</Badge></>}<span className="font-mono text-[10px] text-[#657080]">{fmtDate(top.firstSeen)} · {fmtTime(top.firstSeen, false)}–{fmtTime(top.lastSeen, false)} WIB</span></div>
             <h2 className="mt-4 text-xl font-semibold">{top.title}</h2>
             {top.path.length > 1 && <div className="mt-3 flex flex-wrap items-center gap-1.5">{top.path.map((key, i) => { const e = top.entities.find((x) => x.key === key)!; return <span key={key} className="flex items-center gap-1.5">{i > 0 && <ArrowRight size={13} className="text-[#EF4444]" />}<span className={`rounded-md border px-2 py-1 font-mono text-[11px] ${e.type === 'device' ? 'border-[#F59E0B]/40 bg-[#F59E0B]/10 text-[#FBBF24]' : 'border-[#374151] bg-[#0D1016] text-[#D1D6DD]'}`}>{e.value}</span></span> })}</div>}
             <p className="mt-4 max-w-3xl text-sm leading-6 text-[#AEB6C1]">{incidentSummary(top, steps)}</p>
@@ -62,10 +69,14 @@ export function SummaryView({ data, openImport, openCase, openGraph, openTimelin
             <div className="mt-5 flex flex-wrap gap-2">{topCase && <button onClick={() => openCase(topCase.id)} className="flex items-center gap-2 rounded-lg bg-[#38BDF8] px-4 py-2.5 text-xs font-bold text-[#071018]"><ClipboardList size={14} />Tangani kasus {topCase.id}</button>}<button onClick={() => openGraph(top.id)} className="flex items-center gap-2 rounded-lg border border-[#272E3A] bg-[#191F2A] px-4 py-2.5 text-xs font-semibold hover:border-[#38BDF8]/40"><GitBranch size={14} />Lihat graf</button><button onClick={openTimeline} className="flex items-center gap-2 rounded-lg border border-[#272E3A] bg-[#191F2A] px-4 py-2.5 text-xs font-semibold hover:border-[#38BDF8]/40"><Activity size={14} />Timeline</button></div>
           </div>
         </section>
-        <Card title="Mengapa skor ini?" icon={<ShieldAlert size={16} className="text-[#F59E0B]" />}><ScoreBreakdown incident={top} limit={5} /></Card>
+        <Card title="Apa arti temuan ini?" icon={<ShieldAlert size={16} className="text-[#F59E0B]" />}><ScoreBreakdown incident={top} limit={5} /></Card>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_.65fr]">
+      {data.ot && data.ot.incidentId === top.id && data.ot.windowMs !== undefined && <button data-testid="ot-banner" onClick={openOt} className="mt-4 flex w-full items-center gap-3 rounded-xl border border-[#F59E0B]/30 bg-[#F59E0B]/5 p-4 text-left hover:border-[#F59E0B]/60"><span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#F59E0B]/10 text-[#FBBF24]"><Factory size={18} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-semibold">Serangan ini menyentuh perangkat OT {fmtSpan(data.ot.windowMs)} setelah temuan pertama</span><span className="mt-0.5 block text-xs text-[#AEB6C1]">Lihat apa yang terjadi pada peralatan, dan titik mana yang bisa memutusnya.</span></span><ChevronRight size={16} className="shrink-0 text-[#8D97A6]" /></button>}
+
+      {data.coverage && !data.coverage.complete && <div className="mt-4"><CoverageCard coverage={data.coverage} /></div>}
+
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,.65fr)]">
         <Card title="Apa yang terjadi? — urutan waktu" icon={<Route size={16} className="text-[#38BDF8]" />}>
           <ol className="relative space-y-0">{steps.map((s, i) => <li key={i} className="relative grid grid-cols-[64px_18px_minmax(0,1fr)] gap-3 pb-4 last:pb-0">
             <span className="pt-0.5 text-right font-mono text-[11px] text-[#AEB6C1]">{fmtTime(s.first, false).slice(0, 5)}</span>
@@ -90,6 +101,15 @@ export function SummaryView({ data, openImport, openCase, openGraph, openTimelin
         <Card title="Sumber log" icon={<Database size={16} className="text-[#22C55E]" />}><div className="space-y-3">{Object.entries(stats.byDataset).sort((a, b) => b[1] - a[1]).map(([name, n]) => <div key={name}><div className="mb-1 flex justify-between text-xs"><span className="font-mono text-[#AEB6C1]">{name}</span><span className="font-mono">{fmtNumber(n)}</span></div><div className="h-1.5 rounded-full bg-[#0D1016]"><div className="h-full rounded-full bg-[#38BDF8]" style={{ width: `${(n / stats.total) * 100}%` }} /></div></div>)}</div></Card>
       </div>
     </div>}
+  </div>
+}
+
+/** Silence means something only next to what could have been seen, so this is never a plain all-clear. */
+function NoFindings({ eventCount, coverage }: { eventCount: number; coverage: Coverage | null }) {
+  const thin = !coverage || !coverage.complete
+  return <div className={`self-start rounded-xl border p-6 ${thin ? 'border-[#F59E0B]/30 bg-[#F59E0B]/5' : 'border-[#22C55E]/25 bg-[#22C55E]/5'}`}>
+    <h2 className="flex items-center gap-2 font-semibold">{thin && <TriangleAlert size={17} className="shrink-0 text-[#F59E0B]" />}Tidak ada temuan pada data yang tersedia</h2>
+    <p className="mt-2 text-sm leading-6 text-[#AEB6C1]">{fmtNumber(eventCount)} event diperiksa{coverage ? `, dan ${coverage.rulesWithData} dari ${coverage.rulesTotal} aturan memiliki data untuk dibaca` : ''}. {thin ? 'Ini bukan berarti komputer aman: serangan yang tidak tercatat di log ini tidak mungkin terlihat. Bila ada kecurigaan lain, tetap laporkan sesuai prosedur satuan.' : 'Ini berarti aturan yang ada tidak menemukan polanya, bukan jaminan tidak ada serangan.'}</p>
   </div>
 }
 

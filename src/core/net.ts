@@ -24,6 +24,12 @@ export function ipInCidr(ip: string, cidr: string): boolean {
   return Math.floor(ipN / size) === Math.floor(baseN / size)
 }
 
+/** True for `a.b.c.d/n` with a valid IPv4 base and 1 ≤ n ≤ 32 (`/0` would match every address). */
+export function isValidCidr(cidr: string): boolean {
+  const m = /^([^/]+)\/(\d{1,2})$/.exec(cidr.trim())
+  return !!m && ipv4ToInt(m[1]) !== null && Number(m[2]) >= 1 && Number(m[2]) <= 32
+}
+
 const PRIVATE_RANGES = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '169.254.0.0/16']
 
 /** True for RFC 1918, loopback and link-local IPv4 addresses. */

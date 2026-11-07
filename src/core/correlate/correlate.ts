@@ -1,4 +1,4 @@
-import type { Detection, EntityType, Incident, IncidentEntity, Level, NormalizedEvent, Relation, ScoreTerm, SourceKind, UnitProfile } from '@/core/model'
+import type { Assessment, Detection, EntityType, Incident, IncidentEntity, Level, NormalizedEvent, Relation, ScoreTerm, Signal, SourceKind, UnitProfile } from '@/core/model'
 import { KIND_LABEL, LEVEL_RANK } from '@/core/labels'
 import { cleanIp } from '@/core/ingest/util'
 import { ipInCidr, isExternalIp, isPrivateIp } from '@/core/net'
@@ -19,6 +19,8 @@ import { TACTIC_LABEL, TACTIC_ORDER, tacticOf } from '@/data/attack'
 
 export const LINK_WINDOW_MS = 24 * 60 * 60_000
 export const LEVEL_WEIGHT: Record<Level, number> = { critical: 0.6, high: 0.4, medium: 0.2, low: 0.1, informational: 0.05 }
+/** What a finding adds depends on how much it proves: most attempts fail, and admins run the same tools. */
+export const SIGNAL_FACTOR: Record<Signal, number> = { kuat: 1, ambigu: 0.5, percobaan: 0.25 }
 export const KILLCHAIN_WEIGHT = 0.3
 export const MULTI_SOURCE_WEIGHT = 0.2
 /** A common entity is seen with at least this many hosts (and at least half of them). */
@@ -222,22 +224,82 @@ export function killChain(detections: readonly Detection[]): string[] {
   return out
 }
 
-/** One term per distinct rule (repeat hits of the same rule are not independent evidence), plus bonuses. */
+/** Findings written before signals existed, and ones built by hand, count in full. */
+const signalOf = (d: Detection): Signal => d.signal ?? 'kuat'
+
+/** The strongest thing the findings support. */
+export function assessIncident(detections: readonly Detection[]): Assessment {
+  if (detections.some((d) => signalOf(d) === 'kuat')) return 'indikasi-kuat'
+  return detections.some((d) => signalOf(d) === 'ambigu') ? 'perlu-konfirmasi' : 'hanya-percobaan'
+}
+
+/**
+ * One term per distinct rule (repeat hits of the same rule are not independent evidence), plus
+ * bonuses. A sequence or several log sources support a conclusion only when something in them is hard
+ * to explain away: a scanner runs through recon and exploit patterns whether or not it gets anywhere,
+ * and an admin's day looks like a kill chain too.
+ */
 export function scoreTerms(detections: readonly Detection[], sourceKinds: readonly SourceKind[]): ScoreTerm[] {
   const byRule = new Map<string, Detection[]>()
-  for (const d of detections) byRule.set(d.ruleId, [...(byRule.get(d.ruleId) ?? []), d])
+  for (const d of detections) {
+    const list = byRule.get(d.ruleId)
+    if (list) list.push(d)
+    else byRule.set(d.ruleId, [d])
+  }
+  const weightOf = (d: Detection) => LEVEL_WEIGHT[d.level] * SIGNAL_FACTOR[signalOf(d)]
   const terms: ScoreTerm[] = [...byRule.values()]
-    .sort((a, b) => LEVEL_RANK[b[0].level] - LEVEL_RANK[a[0].level] || a[0].ts - b[0].ts)
-    .map((list) => ({ kind: 'rule', label: list[0].title, weight: LEVEL_WEIGHT[list[0].level], level: list[0].level, count: list.length }))
+    .sort((a, b) => weightOf(b[0]) - weightOf(a[0]) || a[0].ts - b[0].ts)
+    .map((list) => ({ kind: 'rule', label: list[0].title, weight: weightOf(list[0]), level: list[0].level, ...(list[0].signal ? { signal: list[0].signal } : {}), count: list.length }))
+  if (assessIncident(detections) !== 'indikasi-kuat') return terms
   const chain = killChain(detections)
   if (chain.length >= 3) terms.push({ kind: 'killchain', label: `${chain.length} tahap ATT&CK berurutan: ${chain.map((t) => TACTIC_LABEL[t] ?? t).join(' → ')}`, weight: KILLCHAIN_WEIGHT })
   if (sourceKinds.length >= 2) terms.push({ kind: 'sources', label: `Dikuatkan ${sourceKinds.length} jenis sumber log: ${sourceKinds.map((k) => KIND_LABEL[k]).join(', ')}`, weight: MULTI_SOURCE_WEIGHT })
   return terms
 }
 
-/** `1 − Π(1 − wᵢ)`: each independent piece of evidence removes part of the remaining doubt. */
+/** `1 − Π(1 − wᵢ)`: orders the queue, most pressing first. It is not the probability of an attack. */
 export function scoreOf(terms: readonly ScoreTerm[]): number {
   return 1 - terms.reduce((rest, t) => rest * (1 - t.weight), 1)
+}
+
+type TitleInput = {
+  assessment: Assessment
+  tactics: string[]
+  path: IncidentEntity[]
+  hasOt: boolean
+  server: boolean
+  /** External sources, in order of first appearance. */
+  attackers: string[]
+  /** External source of the first finding that is hard to explain away. */
+  provenAttacker: string | undefined
+  top: Detection
+}
+
+/** The title says only what the evidence supports, because it is what a commander reads first. */
+function incidentTitle({ assessment, tactics, path, hasOt, server, attackers, provenAttacker, top }: TitleInput): string {
+  const start = path[0]?.value
+  const at = start ? ` di ${start}` : ''
+  if (assessment === 'hanya-percobaan') {
+    const who = attackers.length > 1 ? `dari ${attackers.length} alamat luar` : attackers[0] ? `dari ${attackers[0]}` : ''
+    if (start) return `Percobaan serangan terhadap ${start} ${who}, belum ada tanda berhasil`.replace(/\s+,/, ',')
+    return `${top.title}, belum ada tanda berhasil`
+  }
+  if (assessment === 'perlu-konfirmasi') {
+    // "Antara", not "dari": the path is in order of first appearance, which is not always the direction.
+    if (path.length >= 2) return `Perlu konfirmasi: aktivitas jarak jauh antara ${path[0].value} dan ${path.at(-1)!.value}, bisa pekerjaan admin`
+    return `Perlu konfirmasi: ${top.title}${at}`
+  }
+  if (path.length >= 2 && hasOt) return `Serangan lintas IT–OT berawal di ${start}`
+  if (path.length >= 2) return tactics.includes('Lateral Movement') ? `Pergerakan lateral berawal di ${start}` : `Rangkaian serangan di ${path.length} aset, berawal di ${start}`
+  const attacker = provenAttacker ?? attackers[0]
+  if (server && attacker && start) return `Peretasan server ${start} dari ${attacker}`
+  return `${top.title}${at}`
+}
+
+/** No incident reads as more severe than its evidence: only findings that are hard to explain away rank above Sedang. */
+function incidentLevel(detections: readonly Detection[], assessment: Assessment): Level {
+  const level = maxLevel(detections.map((d) => d.level))
+  return assessment !== 'indikasi-kuat' && LEVEL_RANK[level] > LEVEL_RANK.medium ? 'medium' : level
 }
 
 export type CorrelationResult = { incidents: Incident[]; inventory: Map<string, InventoryEntry>; common: Set<string> }
@@ -267,7 +329,12 @@ export function correlate(detections: readonly Detection[], events: readonly Nor
   })
 
   const groups = new Map<number, number[]>()
-  sorted.forEach((_, i) => groups.set(find(i), [...(groups.get(find(i)) ?? []), i]))
+  sorted.forEach((_, i) => {
+    const root = find(i)
+    const members = groups.get(root)
+    if (members) members.push(i)
+    else groups.set(root, [i])
+  })
 
   const ipsByName = new Map<string, string[]>()
   for (const [ip, entry] of inventory) ipsByName.set(entry.name, [...(ipsByName.get(entry.name) ?? []), ip])
@@ -278,14 +345,21 @@ export function correlate(detections: readonly Detection[], events: readonly Nor
     // Labels keep the most severe level that produced them, so the worst action is listed first.
     const relations = new Map<string, Relation & { labelLevel: Map<string, Level>; detSet: Set<string> }>()
     const kinds = new Set<SourceKind>()
+    // An entity can appear in every finding of a big incident, so membership is not checked by scanning a list.
+    const seenFindings = new Map<string, Set<string>>()
     const addEntity = (ref: EntityRef, actor: boolean, detectionId: string, ts: number) => {
       const entity = entities.get(ref.key)
       if (entity) {
         entity.actor ||= actor
-        if (!entity.detectionIds.includes(detectionId)) entity.detectionIds.push(detectionId)
+        const seen = seenFindings.get(ref.key)!
+        if (!seen.has(detectionId)) {
+          seen.add(detectionId)
+          entity.detectionIds.push(detectionId)
+        }
         return
       }
       const aliases = ref.key.startsWith('asset:') ? (ipsByName.get(ref.value) ?? []) : []
+      seenFindings.set(ref.key, new Set([detectionId]))
       entities.set(ref.key, { ...ref, aliases, detectionIds: [detectionId], firstSeen: ts, actor, common: common.has(ref.key) })
     }
     for (const i of members) {
@@ -313,23 +387,22 @@ export function correlate(detections: readonly Detection[], events: readonly Nor
     const entityList = [...entities.values()].sort((a, b) => a.firstSeen - b.firstSeen)
     const path = entityList.filter((e) => (e.type === 'host' && e.actor) || e.type === 'device').map((e) => e.key).slice(0, 6)
     const top = [...dets].sort((a, b) => LEVEL_RANK[b.level] - LEVEL_RANK[a.level] || a.ts - b.ts)[0]
-    const start = path.length ? entities.get(path[0])!.value : undefined
     const hasOt = sourceKinds.includes('ot') || path.some((k) => entities.get(k)!.type === 'device')
-    // An outside address acting on a server we have logs from: an attack on a public-facing service.
-    const attacker = sourceKinds.includes('server') ? entityList.find((e) => e.type === 'ip' && e.actor && !e.common && isExternalIp(e.value)) : undefined
-    const title = path.length >= 2 && hasOt
-      ? `Serangan lintas IT–OT berawal di ${start}`
-      : path.length >= 2
-        ? `Pergerakan lateral berawal di ${start}`
-        : attacker && start
-          ? `Peretasan server ${start} dari ${attacker.value}`
-          : `${top.title}${start ? ` di ${start}` : ''}`
+    // Outside addresses acting on a server we have logs from: an attack on a public-facing service.
+    const attackers = sourceKinds.includes('server') ? entityList.filter((e) => e.type === 'ip' && e.actor && !e.common && isExternalIp(e.value)).map((e) => e.value) : []
+    // The one to name is whoever did the part that worked, not the first scanner in the log.
+    const provenIndex = members.find((i) => signalOf(sorted[i]) === 'kuat' && detEvents[i].some((e) => e.srcIp && attackers.includes(e.srcIp)))
+    const provenAttacker = provenIndex === undefined ? undefined : detEvents[provenIndex].find((e) => e.srcIp && attackers.includes(e.srcIp))?.srcIp
+    const assessment = assessIncident(dets)
+    const tactics = TACTIC_ORDER.filter((t) => dets.some((d) => d.attack.some((id) => tacticOf(id) === t)))
+    const title = incidentTitle({ assessment, tactics, path: path.map((k) => entities.get(k)!), hasOt, server: sourceKinds.includes('server'), attackers, provenAttacker, top })
 
     return {
       id: `inc-${hash32(dets[0].id)}`,
       title,
+      assessment,
       path,
-      level: maxLevel(dets.map((d) => d.level)),
+      level: incidentLevel(dets, assessment),
       detectionIds: dets.map((d) => d.id),
       ruleIds: [...new Set(dets.map((d) => d.ruleId))],
       entities: entityList,
@@ -338,7 +411,7 @@ export function correlate(detections: readonly Detection[], events: readonly Nor
         labels: [...labelLevel].sort((a, b) => LEVEL_RANK[b[1]] - LEVEL_RANK[a[1]]).map(([label]) => label),
         detectionIds: [...detSet],
       })),
-      tactics: TACTIC_ORDER.filter((t) => dets.some((d) => d.attack.some((id) => tacticOf(id) === t))),
+      tactics,
       sourceKinds,
       score: scoreOf(terms),
       scoreBreakdown: terms,

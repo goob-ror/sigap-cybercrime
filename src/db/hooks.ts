@@ -1,7 +1,9 @@
 import { useMemo } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '@/db/db'
+import type { Coverage } from '@/core/coverage'
 import type { Artifact, Case, Detection, Incident, NormalizedEvent } from '@/core/model'
+import type { OtAnalysis } from '@/core/ot/analysis'
 import type { EventStats } from '@/core/stats'
 import type { ScenarioCheck } from '@/workers/protocol'
 
@@ -20,6 +22,10 @@ export type Investigation = {
   caseById: Map<string, Case>
   stats: EventStats | null
   check: ScenarioCheck | null
+  /** What the imported logs let the rules see. */
+  coverage: Coverage | null
+  /** What the Modbus traffic says happened to the physical process. Null when the logs hold none. */
+  ot: OtAnalysis | null
   /** Engine version that produced the stored results, if any. */
   engine: string | null
 }
@@ -58,6 +64,8 @@ export function useInvestigation(): Investigation {
       caseById: new Map(cases.map((c) => [c.id, c])),
       stats: (meta.find((m) => m.key === 'stats')?.value as EventStats | undefined) ?? null,
       check: (meta.find((m) => m.key === 'check')?.value as ScenarioCheck | undefined) ?? null,
+      coverage: (meta.find((m) => m.key === 'coverage')?.value as Coverage | undefined) ?? null,
+      ot: (meta.find((m) => m.key === 'ot')?.value as OtAnalysis | undefined) ?? null,
       engine: (meta.find((m) => m.key === 'engine')?.value as string | undefined) ?? null,
     }
   }, [data])

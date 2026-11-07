@@ -147,7 +147,7 @@ describe('blocklistFiles', () => {
 
   it('writes a CSV with a header row and context', () => {
     const csv = files.get('blocklist.csv')!.split('\n')
-    expect(csv[1]).toBe('tipe,nilai,jumlah_temuan,pertama_terlihat,aturan')
+    expect(csv[1]).toBe('tipe,nilai,jumlah_temuan,pertama_terlihat,aturan,saran')
     expect(csv.some((l) => l.startsWith('ip,203.0.113.66,1,'))).toBe(true)
     expect(csv.some((l) => l.includes('Koneksi C2; Unduhan berbahaya'))).toBe(true)
   })
@@ -156,6 +156,29 @@ describe('blocklistFiles', () => {
     const hosts = files.get('dns-sinkhole.hosts')!
     expect(hosts).toContain('0.0.0.0 cdn-tukin.example')
     expect(hosts).not.toContain('203.0.113.66')
+  })
+
+  it('keeps own, government and shared-service domains out of what gets loaded', () => {
+    const own = incidentIocs(inc('i', [ind('domain', 'portal.satuan.mil.id', ['d1']), ind('domain', 'www.bssn.go.id', ['d1']), ind('domain', 'update.microsoft.com', ['d1']), ind('domain', 'situs.contoh-satuan.example', ['d1']), ind('domain', 'cdn-tukin.example', ['d1']), ind('ip', '8.8.8.8', ['d1'])]), detectionsById)
+    const out = new Map(blocklistFiles(own, { ...META, ownDomains: ['contoh-satuan.example'] }).map((f) => [f.name, f.text]))
+    expect(out.get('dns-sinkhole.hosts')!.split('\n').filter((l) => l.startsWith('0.0.0.0'))).toEqual(['0.0.0.0 cdn-tukin.example'])
+    expect(out.get('blocklist.txt')).toContain('# portal.satuan.mil.id  (layanan pemerintah')
+    expect(out.get('blocklist.txt')).toContain('# situs.contoh-satuan.example  (domain milik satuan)')
+    expect(out.get('blocklist.txt')).toContain('# 8.8.8.8  (DNS publik')
+    expect(out.get('blocklist.csv')).toMatch(/domain,cdn-tukin\.example,.*,blokir/)
+  })
+
+  it('does not propose loading indicators from incidents that are unconfirmed or only attempts', () => {
+    const unconfirmed = { ...inc('a', [ind('domain', 'lemah.example', ['d1']), ind('ip', '203.0.113.7', ['d1'])]), assessment: 'perlu-konfirmasi' as const }
+    const attempts = { ...inc('b', [ind('ip', '203.0.113.8', ['d1'])]), assessment: 'hanya-percobaan' as const }
+    const proven = { ...inc('c', [ind('ip', '203.0.113.7', ['d1'])]), assessment: 'indikasi-kuat' as const }
+    const list = allIocs([unconfirmed, attempts, proven], detectionsById)
+    const review = (value: string) => list.find((i) => i.value === value)?.review
+    expect(review('lemah.example')).toContain('perlu dikonfirmasi')
+    expect(review('203.0.113.8')).toContain('percobaan')
+    // One strong incident is enough, whatever the others say.
+    expect(review('203.0.113.7')).toBeUndefined()
+    expect(blocklistFiles(list, META).find((f) => f.name === 'dns-sinkhole.hosts')!.text).not.toContain('0.0.0.0 lemah.example')
   })
 
   it('handles an empty indicator set without crashing', () => {

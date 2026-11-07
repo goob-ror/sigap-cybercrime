@@ -114,6 +114,23 @@ describe('APK triage (AXML)', () => {
     expect(report.score).toBeGreaterThan(0.8)
   })
 
+  it('ranks a small OTP stealer above an ordinary messenger', () => {
+    const P = (n: string) => `android.permission.${n}`
+    const messenger = ['READ_CONTACTS', 'READ_PHONE_STATE', 'RECEIVE_SMS', 'SEND_SMS', 'RECORD_AUDIO', 'CAMERA', 'ACCESS_FINE_LOCATION', 'RECEIVE_BOOT_COMPLETED', 'WRITE_EXTERNAL_STORAGE', 'INTERNET'].map(P)
+    const legit = analyzeApk({ manifest: { permissions: messenger, labels: [] }, strings: [], sha256: 'x', size: 1 })
+    const stealer = analyzeApk({ manifest: { permissions: [P('INTERNET'), P('RECEIVE_SMS')], labels: [] }, strings: ['https://api.telegram.org/botXXX/sendMessage'], sha256: 'y', size: 1 })
+    expect(stealer.signals.map((s) => s.id)).toEqual(expect.arrayContaining(['telegram-bot', 'sms-stealer']))
+    expect(stealer.score).toBeGreaterThan(legit.score)
+    expect(legit.score).toBeLessThan(0.6)
+    expect(stealer.score).toBeGreaterThan(0.75)
+  })
+
+  it('sees an accessibility service and an SMS listener declared the way Android requires', () => {
+    const report = analyzeApk({ manifest: { permissions: ['android.permission.INTERNET'], labels: [], componentPermissions: ['android.permission.BIND_ACCESSIBILITY_SERVICE'], actions: ['android.provider.Telephony.SMS_RECEIVED'] }, strings: [], sha256: 'z', size: 1 })
+    expect(report.signals.map((s) => s.id)).toEqual(expect.arrayContaining(['accessibility', 'sms-stealer']))
+    expect(report.permissions[0].name).toContain('BIND_ACCESSIBILITY_SERVICE')
+  })
+
   it('does not flag benign permissions (INTERNET is not dangerous)', () => {
     const manifest = { permissions: ['android.permission.INTERNET', 'android.permission.ACCESS_NETWORK_STATE'], labels: [] }
     const report = analyzeApk({ manifest, strings: [], sha256: 'ab'.repeat(32), size: 1024 })
