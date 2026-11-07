@@ -109,8 +109,8 @@ export function SummaryView({
   const datasets = Object.keys(stats?.byDataset ?? {}).length;
 
   return (
-    <div className="mx-auto max-w-[1600px]">
-      <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+    <div className="w-full">
+      <div className="mb-7 flex flex-col justify-between gap-4 md:flex-row md:items-end">
         <PageTitle
           eyebrow="Pusat Investigasi"
           title="Ringkasan"
@@ -127,7 +127,7 @@ export function SummaryView({
         </Badge>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {(
           [
             [
@@ -164,19 +164,21 @@ export function SummaryView({
         ).map(([label, value, sub, Icon, color]) => (
           <div
             key={label}
-            className="rounded-xl border border-[#272E3A] bg-[#131720] p-4"
+            className="rounded-xl border border-[#1E2532] bg-[#0F1520] p-5 transition hover:border-[#2A3A50]"
           >
-            <div className="flex items-center justify-between text-xs text-[#7E8998]">
+            <div className="flex items-center justify-between text-xs text-[#5A6B7E]">
               {label}
               <span
-                className="grid size-8 place-items-center rounded-lg bg-[#0D1016]"
+                className="grid size-8 place-items-center rounded-lg bg-[#0A1020]"
                 style={{ color }}
               >
                 <Icon size={15} />
               </span>
             </div>
-            <div className="mt-3 font-mono text-2xl font-semibold">{value}</div>
-            <div className="mt-1 text-[10px] text-[#657080]">{sub}</div>
+            <div className="mt-3 font-mono text-2xl font-bold text-[#E8EDF3]">
+              {value}
+            </div>
+            <div className="mt-1 text-[10px] text-[#3D5068]">{sub}</div>
           </div>
         ))}
       </div>

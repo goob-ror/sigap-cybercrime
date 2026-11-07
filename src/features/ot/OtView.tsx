@@ -214,7 +214,7 @@ export function OtView({ ot, openImport, openDetail, notify }: Props) {
   const unit = (u?: string) => (u ? ` ${u}` : "");
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5">
+    <div className="w-full space-y-5">
       <PageTitle
         eyebrow="Lintas IT-OT"
         title="Dari Jaringan ke Proses Fisik"

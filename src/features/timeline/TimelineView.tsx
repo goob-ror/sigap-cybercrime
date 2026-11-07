@@ -120,7 +120,7 @@ export function TimelineView({
   const rulesFired = new Set(detections.map((d) => d.ruleId)).size;
 
   return (
-    <div className="mx-auto max-w-[1600px]">
+    <div className="w-full">
       <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
         <PageTitle
           eyebrow="Investigasi / Kronologi"

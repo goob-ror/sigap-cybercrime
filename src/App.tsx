@@ -358,43 +358,46 @@ function App() {
   ] as const;
 
   return (
-    <div className="min-h-screen bg-[#090B0F] text-[#F3F5F7]">
+    <div className="min-h-screen bg-[#070A0F] text-[#E8EDF3]">
       {toast && (
         <div
           role="status"
-          className="fixed right-5 top-5 z-50 flex max-w-md items-center gap-2 rounded-lg border border-[#22C55E]/30 bg-[#132019] px-4 py-3 text-sm shadow-2xl"
+          className="fixed right-5 top-5 z-50 flex max-w-md items-center gap-2.5 rounded-xl border border-[#22C55E]/30 bg-[#0C1A14] px-4 py-3 text-sm shadow-2xl shadow-black/40 ring-1 ring-inset ring-[#22C55E]/10"
         >
           <CircleCheck size={16} className="shrink-0 text-[#22C55E]" />
           {toast}
         </div>
       )}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-[#272E3A] bg-[#0D1016] transition-transform lg:translate-x-0 ${mobileNav ? "translate-x-0" : "-translate-x-full"}`}
+        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-[#161D28] bg-[#09101A] transition-transform lg:translate-x-0 ${mobileNav ? "translate-x-0" : "-translate-x-full"}`}
       >
-        <div className="flex h-16 shrink-0 items-center justify-between border-b border-[#272E3A] px-5">
+        {/* Sidebar logo */}
+        <div className="flex h-16 shrink-0 items-center justify-between border-b border-[#161D28] px-5">
           <div className="flex items-center gap-3">
-            <div className="grid size-8 place-items-center rounded-lg bg-[#38BDF8] text-[#071018]">
+            <div className="grid size-9 place-items-center rounded-xl bg-[#38BDF8] text-[#040D18] shadow-lg shadow-[#38BDF8]/20">
               <ShieldAlert size={18} />
             </div>
             <div>
-              <div className="text-sm font-extrabold tracking-[0.16em]">
+              <div className="text-sm font-extrabold tracking-[0.18em] text-white">
                 SIGAP
               </div>
-              <div className="text-[9px] text-[#6F7A89]">
+              <div className="text-[9px] font-medium tracking-[0.1em] text-[#3D5068]">
                 PENANGANAN AWAL INSIDEN
               </div>
             </div>
           </div>
           <button
-            className="lg:hidden"
+            className="rounded-lg p-1 text-[#4A5E72] hover:bg-[#131F2E] hover:text-white lg:hidden"
             onClick={() => setMobileNav(false)}
             aria-label="Tutup navigasi"
           >
-            <X size={18} />
+            <X size={16} />
           </button>
         </div>
+
+        {/* Nav items */}
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
-          <div className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#657080]">
+          <div className="mb-3 px-3 text-[9px] font-bold uppercase tracking-[0.2em] text-[#2E4058]">
             Ruang kerja
           </div>
           <nav className="space-y-0.5">
@@ -402,15 +405,19 @@ function App() {
               <button
                 key={label}
                 onClick={() => go(label)}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[13px] transition ${page === label ? "bg-[#191F2A] text-white shadow-[inset_2px_0_0_#38BDF8]" : "text-[#9BA5B4] hover:bg-[#131720] hover:text-white"}`}
+                className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-all ${
+                  page === label
+                    ? "bg-[#0E1E31] text-white shadow-[inset_3px_0_0_#38BDF8]"
+                    : "text-[#7A8FA4] hover:bg-[#0C1726] hover:text-[#C8D4E0]"
+                }`}
               >
                 <Icon
-                  size={16}
-                  className={page === label ? "text-[#38BDF8]" : ""}
+                  size={15}
+                  className={`shrink-0 transition-colors ${page === label ? "text-[#38BDF8]" : "text-[#3D5A72] group-hover:text-[#7FBFDF]"}`}
                 />
-                {label}
+                <span className="flex-1 text-left">{label}</span>
                 {label === "Kasus" && openCases > 0 && (
-                  <span className="ml-auto rounded bg-[#EF4444]/15 px-1.5 py-0.5 font-mono text-[10px] text-[#FCA5A5]">
+                  <span className="ml-auto rounded-md bg-[#EF4444]/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#FCA5A5]">
                     {openCases}
                   </span>
                 )}
@@ -418,11 +425,13 @@ function App() {
             ))}
           </nav>
         </div>
-        <div className="shrink-0 border-t border-[#272E3A] p-4">
+
+        {/* Sidebar footer */}
+        <div className="shrink-0 border-t border-[#161D28] p-4 space-y-2">
           {installer.canInstall && (
             <button
               onClick={() => void installer.install()}
-              className="mb-2 flex w-full items-center gap-2 rounded-lg border border-[#38BDF8]/30 bg-[#38BDF8]/10 px-3 py-2 text-left text-xs font-semibold text-[#7DD3FC] hover:border-[#38BDF8]/60"
+              className="flex w-full items-center gap-2 rounded-lg border border-[#38BDF8]/25 bg-[#38BDF8]/8 px-3 py-2.5 text-left text-xs font-semibold text-[#7DD3FC] transition hover:border-[#38BDF8]/50 hover:bg-[#38BDF8]/12"
             >
               <MonitorDown size={14} className="shrink-0" />
               Pasang sebagai aplikasi
@@ -431,33 +440,35 @@ function App() {
           <button
             onClick={() => setOperatorOpen(true)}
             title="Ganti operator"
-            className="mb-2 flex w-full items-center gap-2 rounded-lg border border-[#272E3A] bg-[#131720] px-3 py-2 text-left text-xs hover:border-[#38BDF8]/40"
+            className="flex w-full items-center gap-2.5 rounded-lg border border-[#161D28] bg-[#0C1726] px-3 py-2.5 text-left text-xs transition hover:border-[#38BDF8]/30"
           >
             <UserRound size={14} className="shrink-0 text-[#38BDF8]" />
-            <span className="truncate">{settings.operator ?? "—"}</span>
-            <span className="ml-auto shrink-0 text-[10px] text-[#7E8998]">
-              Ganti
+            <span className="min-w-0 flex-1 truncate text-[#C0CAD4]">
+              {settings.operator ?? "—"}
             </span>
+            <span className="shrink-0 text-[10px] text-[#3D5068]">Ganti</span>
           </button>
-          <div className="mb-2 rounded-lg border border-[#272E3A] bg-[#131720] p-3">
-            <div className="mb-1 flex items-center justify-between text-xs">
-              <span className="font-medium">Data lokal</span>
+          <div className="rounded-lg border border-[#161D28] bg-[#0C1726] p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold text-[#B0BAC6]">
+                Data lokal
+              </span>
               {online.active ? (
                 <button
                   onClick={() => go("Pengaturan")}
-                  title="Fitur online diizinkan. Tidak ada yang terkirim tanpa Anda menekan tombolnya."
+                  title="Fitur online diizinkan."
                 >
                   <Badge className="border-[#F59E0B]/30 bg-[#F59E0B]/10 text-[#FCD34D]">
                     ONLINE DIIZINKAN
                   </Badge>
                 </button>
               ) : (
-                <Badge className="border-[#22C55E]/20 bg-[#22C55E]/10 text-[#86EFAC]">
+                <Badge className="border-[#22C55E]/20 bg-[#22C55E]/8 text-[#86EFAC]">
                   OFFLINE
                 </Badge>
               )}
             </div>
-            <p className="text-[11px] leading-4 text-[#737E8E]">
+            <p className="text-[11px] leading-4 text-[#3D5068]">
               {fmtNumber(data.eventCount)} event ·{" "}
               {fmtNumber(data.detections.length)} temuan · {data.cases.length}{" "}
               kasus · {data.imports.length} berkas. Tersimpan hanya di browser
@@ -466,14 +477,14 @@ function App() {
             <button
               disabled={ingest.busy || !data.eventCount}
               onClick={() => setClearOpen(true)}
-              className="mt-2 flex items-center gap-1.5 text-[10px] text-[#9BA5B4] hover:text-[#FCA5A5] disabled:opacity-40"
+              className="mt-2.5 flex items-center gap-1.5 text-[10px] text-[#4A5E72] transition hover:text-[#FCA5A5] disabled:opacity-40"
             >
               <Trash2 size={11} />
               Hapus data lokal
             </button>
           </div>
-          <div className="flex items-center gap-2 text-xs text-[#9BA5B4]">
-            <span className="size-2 rounded-full bg-[#22C55E]" />
+          <div className="flex items-center gap-2 px-1 text-[11px] text-[#3D5068]">
+            <span className="size-1.5 rounded-full bg-[#22C55E] shadow-sm shadow-[#22C55E]/50" />
             {data.coverage?.rulesTotal ??
               RULE_PACK.sigma.length + RULE_PACK.native.length}{" "}
             aturan deteksi aktif
@@ -483,26 +494,27 @@ function App() {
 
       {mobileNav && (
         <div
-          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+          className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden"
           onClick={() => setMobileNav(false)}
         />
       )}
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-[#272E3A] bg-[#090B0F]/90 px-4 backdrop-blur md:px-6">
+        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-[#161D28] bg-[#070A0F]/95 px-4 backdrop-blur-md md:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <button
               onClick={() => setMobileNav(true)}
-              className="lg:hidden shrink-0"
+              className="rounded-lg p-1.5 text-[#4A5E72] hover:bg-[#0C1726] hover:text-white lg:hidden shrink-0"
               aria-label="Buka navigasi"
             >
-              <Menu size={20} />
+              <Menu size={18} />
             </button>
             <div className="min-w-0">
-              <div className="hidden items-center gap-2 text-xs text-[#7E8998] sm:flex">
-                Ruang kerja lokal <ChevronRight size={12} />
-                {page}
+              <div className="hidden items-center gap-1.5 text-[11px] text-[#3D5068] sm:flex">
+                <span>Ruang kerja lokal</span>
+                <ChevronRight size={11} className="text-[#2A3A4A]" />
+                <span className="text-[#7A8FA4]">{page}</span>
               </div>
-              <div className="mt-0.5 truncate text-sm font-semibold">
+              <div className="mt-0.5 truncate text-sm font-semibold text-[#C8D4E0]">
                 {data.detections.length
                   ? `${fmtNumber(data.incidents.length)} insiden · ${fmtNumber(data.detections.length)} temuan`
                   : data.eventCount
@@ -511,9 +523,9 @@ function App() {
               </div>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2 md:gap-4">
-            <div className="hidden items-center gap-2 border-r border-[#272E3A] pr-4 font-mono text-[11px] text-[#7E8998] md:flex">
-              <Clock3 size={14} />
+          <div className="flex shrink-0 items-center gap-2 md:gap-3">
+            <div className="hidden items-center gap-2 border-r border-[#161D28] pr-4 font-mono text-[11px] text-[#3D5068] md:flex">
+              <Clock3 size={13} className="text-[#2A3A4A]" />
               {now.toLocaleTimeString("id-ID", {
                 hour12: false,
                 timeZone: "Asia/Jakarta",
@@ -552,11 +564,11 @@ function App() {
           </div>
         </header>
 
-        <main className="p-4 md:p-6">
+        <main className="p-5 md:p-7">
           {!window.isSecureContext && (
             <div
               role="alert"
-              className="mb-4 flex gap-2 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 p-3 text-xs leading-5 text-[#FCA5A5]"
+              className="mb-5 flex gap-2.5 rounded-xl border border-[#EF4444]/25 bg-[#EF4444]/8 p-4 text-xs leading-5 text-[#FCA5A5]"
             >
               <TriangleAlert size={15} className="mt-0.5 shrink-0" />
               <span>
