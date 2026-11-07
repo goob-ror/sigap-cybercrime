@@ -64,7 +64,7 @@ export function OtView({ ot, openImport, openDetail, notify }: Props) {
     {!ot.hasValues && <div className="flex gap-2 rounded-lg border border-[#F59E0B]/30 bg-[#F59E0B]/10 p-3 text-xs leading-5 text-[#FCD34D]"><TriangleAlert size={15} className="mt-0.5 shrink-0" /><span>Log ini tidak memuat alamat dan nilai Modbus, jadi hanya siapa yang berbicara dengan perangkat OT yang dapat dilihat. Untuk menyusun apa yang terjadi pada peralatan, pasang plugin ICSNPP-Modbus pada Zeek dan impor <code>modbus_detailed.log</code>.</span></div>}
     {ot.learnedTalkers && <div className="flex gap-2 rounded-lg border border-[#F59E0B]/30 bg-[#F59E0B]/10 p-3 text-xs leading-5 text-[#FCD34D]"><TriangleAlert size={15} className="mt-0.5 shrink-0" /><span>Profil satuan belum menyebut HMI, jadi yang dianggap normal dipelajari dari pola lalu lintas: host yang mengirim sebagian besar transaksi. Bila penyerang sudah lama ada di jaringan, pola ini bisa keliru. Isi host HMI di Pengaturan.</span></div>}
 
-    <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Tile testId="ot-window" icon={Timer} label="Jendela respons" value={ot.windowMs !== undefined ? fmtSpan(ot.windowMs) : '—'} sub={ot.windowMs !== undefined ? `Temuan pertama ${fmtTime(ot.firstFinding!, false)} → OT tersentuh ${fmtTime(ot.firstContact!, false)} WIB` : 'Tidak ada host tak dikenal yang menyentuh OT'} />
       <Tile testId="ot-writes" icon={Zap} label="Perintah tak berwenang" value={fmtNumber(intruders.length)} sub={intruders.length ? `${applied} terlihat berlaku · dari ${intruderNames.join(', ')}` : `${fmtNumber(ot.transactions)} transaksi Modbus diperiksa`} />
       <Tile testId="ot-outside" icon={Gauge} label="Di luar batas aman" value={setpoint ? fmtSpan(setpoint.outOfBandMs) : '—'} sub={setpoint ? `${setpoint.label}, mencapai ${setpoint.episodes[0].peak}${unit(setpoint.unit)}${setpoint.band?.source === 'dipelajari' ? ' · batas dipelajari dari log' : ''}` : 'Tidak terlihat di log ini'} />
@@ -84,7 +84,7 @@ export function OtView({ ot, openImport, openDetail, notify }: Props) {
       </div>
     </Card>}
 
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <Card title="Langkah Aman untuk OT" icon={<ListChecks size={16} className="text-[#22C55E]" />}>
         {actions.length === 0 ? <p className="text-xs text-[#8D97A6]">Tidak terlihat perintah tak berwenang pada log ini. Ini bukan berarti OT aman: lihat siapa saja yang berbicara dengan perangkat di bawah.</p> : <ol data-testid="ot-actions" className="space-y-2">{actions.map((a, i) => <li key={a.title} className="flex gap-3 rounded-lg border border-[#272E3A] bg-[#0D1016] p-3"><span className="font-mono text-xs text-[#38BDF8]">{i + 1}</span><div className="min-w-0"><div className="text-xs font-semibold leading-5">{a.title}</div><p className="mt-0.5 text-[11px] leading-4 text-[#8D97A6]">{a.detail}</p></div></li>)}</ol>}
         <p className="mt-3 text-[10px] leading-4 text-[#D4A64B]">Tindakan pada sistem operasional wajib seizin komandan dan dicatat.</p>

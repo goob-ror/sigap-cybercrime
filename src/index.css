@@ -1,21 +1,83 @@
-@import '@fontsource-variable/inter';
-@import 'tailwindcss';
+@import "@fontsource-variable/inter";
+@import "tailwindcss";
 
 @layer base {
-  :root { font-family: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif; color-scheme: dark; }
-  body { background: #090B0F; background-image: radial-gradient(circle at 75% -20%, rgb(56 189 248 / .055), transparent 34%); }
-  button, select { cursor: pointer; }
-  button, input, select { transition-property: color, background-color, border-color, opacity, transform, box-shadow; transition-duration: 160ms; }
-  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid rgb(56 189 248 / .75); outline-offset: 2px; }
-  ::selection { background: rgb(56 189 248 / .25); }
-  * { scrollbar-width: thin; scrollbar-color: #272E3A transparent; }
+  :root {
+    font-family: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
+    color-scheme: dark;
+  }
+  body {
+    background: #090b0f;
+    background-image: radial-gradient(
+      circle at 75% -20%,
+      rgb(56 189 248 / 0.055),
+      transparent 34%
+    );
+  }
+  button,
+  select {
+    cursor: pointer;
+  }
+  button,
+  input,
+  select {
+    transition-property:
+      color, background-color, border-color, opacity, transform, box-shadow;
+    transition-duration: 160ms;
+  }
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    outline: 2px solid rgb(56 189 248 / 0.75);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: rgb(56 189 248 / 0.25);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #272e3a transparent;
+  }
+  /* Smooth momentum scrolling on iOS */
+  * {
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Better tap targets on touch devices */
+  @media (hover: none) and (pointer: coarse) {
+    button,
+    select,
+    [role="button"] {
+      min-height: 40px;
+    }
+  }
 }
 
 @media print {
-  aside, header, main > div > div:first-child, button { display: none !important; }
-  body, #root, main, .report { background: white !important; color: #111827 !important; }
-  .lg\:pl-60 { padding-left: 0 !important; }
-  main { padding: 0 !important; }
-  .report { display: block !important; border: 0 !important; }
-  .report * { color: #111827 !important; border-color: #d1d5db !important; }
+  aside,
+  header,
+  main > div > div:first-child,
+  button {
+    display: none !important;
+  }
+  body,
+  #root,
+  main,
+  .report {
+    background: white !important;
+    color: #111827 !important;
+  }
+  .lg\:pl-64 {
+    padding-left: 0 !important;
+  }
+  main {
+    padding: 0 !important;
+  }
+  .report {
+    display: block !important;
+    border: 0 !important;
+  }
+  .report * {
+    color: #111827 !important;
+    border-color: #d1d5db !important;
+  }
 }
